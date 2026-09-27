@@ -30,6 +30,7 @@ jobs:
 
       - name: Prepara ed esegui il sync di Capacitor Android
         run: |
+          npm install @capacitor/assets --save-dev
           mkdir -p assets
           cp public/icon-512.png assets/icon.png
           npx @capacitor/assets generate --android
