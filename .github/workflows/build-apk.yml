@@ -30,13 +30,13 @@ jobs:
 
       - name: Prepara ed esegui il sync di Capacitor Android
         run: |
-          npm install @capacitor/assets --save-dev
+          npm install -g @capacitor/assets
           mkdir -p assets
           cp public/icon-512.png assets/icon.png
-          npx @capacitor/assets generate --android
           if [ ! -d "android" ]; then
             npx cap add android
           fi
+          npx @capacitor/assets generate --android
           npx cap sync android
 
       - name: Estrai chiave di firma fissa
