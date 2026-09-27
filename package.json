@@ -1,7 +1,7 @@
 {
   "name": "money-tracker",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,8 @@
     "recharts": "^2.12.7",
     "lucide-react": "^0.446.0",
     "@capacitor/core": "^6.1.2",
-    "@capacitor/android": "^6.1.2"
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/local-notifications": "^6.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
