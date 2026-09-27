@@ -1,113 +1,59 @@
 name: Build APK (Capacitor)
 
-# Workflow principale: usalo ad ogni aggiornamento dell'app.
-# Scarica il codice, installa le dipendenze, compila con Vite, aggiunge la
-# piattaforma Android tramite Capacitor, ripristina la chiave di firma fissa
-# dal secret DEBUG_KEYSTORE_BASE64, compila l'APK con Gradle e lo carica come
-# artifact scaricabile.
-
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 22
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
+      - name: Installa dipendenze e compila l'app web
+        run: |
+          npm install
+          npm run build
+
+      - uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
 
-      - name: Build web app
-        run: npm run build
-
-      - name: Add Android platform
+      - name: Prepara ed esegui il sync di Capacitor Android
         run: |
-          npx cap add android || true
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
-      - name: Restore signing keystore from secret
+      - name: Estrai chiave di firma fissa
         run: |
-          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > android/money-tracker.keystore
+          mkdir -p ~/.android
+          if [ -n "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/android/app/debug.keystore
+            echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
+            echo "Chiave fissa ripristinata con successo!"
+          else
+            echo "::warning::Nessun secret DEBUG_KEYSTORE_BASE64 impostato!"
+          fi
 
-      - name: Configure Gradle signing
-        run: |
-          cat >> android/gradle.properties << 'EOF'
-          MYAPP_UPLOAD_STORE_FILE=money-tracker.keystore
-          MYAPP_UPLOAD_STORE_PASSWORD=moneytracker123
-          MYAPP_UPLOAD_KEY_ALIAS=money-tracker
-          MYAPP_UPLOAD_KEY_PASSWORD=moneytracker123
-          EOF
+      - name: Compila l'APK
+        working-directory: android
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/android/app/debug.keystore
+        run: ./gradlew assembleDebug -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" -Pandroid.injected.signing.store.password=android -Pandroid.injected.signing.key.alias=androiddebugkey -Pandroid.injected.signing.key.password=android
 
-      - name: Patch build.gradle for signing
-        run: |
-          python3 - << 'PYEOF'
-          import re
-          path = "android/app/build.gradle"
-          with open(path) as f:
-              content = f.read()
-
-          signing_config = '''
-              signingConfigs {
-                  release {
-                      storeFile file(MYAPP_UPLOAD_STORE_FILE)
-                      storePassword MYAPP_UPLOAD_STORE_PASSWORD
-                      keyAlias MYAPP_UPLOAD_KEY_ALIAS
-                      keyPassword MYAPP_UPLOAD_KEY_PASSWORD
-                  }
-              }
-          '''
-
-          if "signingConfigs" not in content:
-              content = content.replace(
-                  "android {",
-                  "android {" + signing_config,
-                  1
-              )
-
-          content = re.sub(
-              r"(buildTypes\s*\{\s*release\s*\{)",
-              r"\1\n            signingConfig signingConfigs.release",
-              content
-          )
-          content = re.sub(
-              r"(debuggable\s+true[^}]*\})",
-              r"\1",
-              content
-          )
-
-          with open(path, "w") as f:
-              f.write(content)
-          PYEOF
-
-      - name: Grant execute permission to gradlew
-        run: chmod +x android/gradlew
-
-      - name: Build APK
-        run: |
-          cd android
-          ./gradlew assembleDebug
-          # Rinomina per chiarezza dell'artifact
-          cp app/build/outputs/apk/debug/app-debug.apk ../app-debug.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - name: Carica l'APK come artifact
+        uses: actions/upload-artifact@v6
         with:
           name: money-tracker-apk
-          path: app-debug.apk
-          retention-days: 90
+          path: android/app/build/outputs/apk/debug/app-debug.apk
