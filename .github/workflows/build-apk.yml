@@ -1,0 +1,113 @@
+name: Build APK (Capacitor)
+
+# Workflow principale: usalo ad ogni aggiornamento dell'app.
+# Scarica il codice, installa le dipendenze, compila con Vite, aggiunge la
+# piattaforma Android tramite Capacitor, ripristina la chiave di firma fissa
+# dal secret DEBUG_KEYSTORE_BASE64, compila l'APK con Gradle e lo carica come
+# artifact scaricabile.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Add Android platform
+        run: |
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Restore signing keystore from secret
+        run: |
+          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > android/money-tracker.keystore
+
+      - name: Configure Gradle signing
+        run: |
+          cat >> android/gradle.properties << 'EOF'
+          MYAPP_UPLOAD_STORE_FILE=money-tracker.keystore
+          MYAPP_UPLOAD_STORE_PASSWORD=moneytracker123
+          MYAPP_UPLOAD_KEY_ALIAS=money-tracker
+          MYAPP_UPLOAD_KEY_PASSWORD=moneytracker123
+          EOF
+
+      - name: Patch build.gradle for signing
+        run: |
+          python3 - << 'PYEOF'
+          import re
+          path = "android/app/build.gradle"
+          with open(path) as f:
+              content = f.read()
+
+          signing_config = '''
+              signingConfigs {
+                  release {
+                      storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                      storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                      keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                      keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+                  }
+              }
+          '''
+
+          if "signingConfigs" not in content:
+              content = content.replace(
+                  "android {",
+                  "android {" + signing_config,
+                  1
+              )
+
+          content = re.sub(
+              r"(buildTypes\s*\{\s*release\s*\{)",
+              r"\1\n            signingConfig signingConfigs.release",
+              content
+          )
+          content = re.sub(
+              r"(debuggable\s+true[^}]*\})",
+              r"\1",
+              content
+          )
+
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+
+      - name: Grant execute permission to gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build APK
+        run: |
+          cd android
+          ./gradlew assembleDebug
+          # Rinomina per chiarezza dell'artifact
+          cp app/build/outputs/apk/debug/app-debug.apk ../app-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: money-tracker-apk
+          path: app-debug.apk
+          retention-days: 90
