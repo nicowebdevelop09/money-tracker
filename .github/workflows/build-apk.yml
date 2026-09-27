@@ -30,6 +30,9 @@ jobs:
 
       - name: Prepara ed esegui il sync di Capacitor Android
         run: |
+          mkdir -p assets
+          cp public/icon-512.png assets/icon.png
+          npx @capacitor/assets generate --android
           if [ ! -d "android" ]; then
             npx cap add android
           fi
