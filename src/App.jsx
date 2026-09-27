@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { LocalNotifications } from '@capacitor/local-notifications'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, ResponsiveContainer, Tooltip,
 } from 'recharts'
@@ -40,6 +42,11 @@ const DEFAULT_ACCOUNTS = [
   { id: 'card', name: 'Carta', initialBalance: 0 },
 ]
 
+const CATEGORY_PALETTE = [
+  '#f97316', '#3b82f6', '#92400e', '#ef4444', '#a855f7', '#ec4899',
+  '#14b8a6', '#6b7280', '#22c55e', '#f59e0b', '#84cc16', '#06b6d4', '#8b5cf6', '#ea580c',
+]
+
 const DEBT_TYPES = {
   loanGiven: { label: 'Prestito erogato', sign: 1 },
   debtTaken: { label: 'Debito contratto', sign: -1 },
@@ -76,6 +83,84 @@ function useLocalStorageState(key, initial) {
     try { localStorage.setItem(key, JSON.stringify(state)) } catch {}
   }, [key, state])
   return [state, setState]
+}
+
+/* ============================================================
+   NOTIFICHE LOCALI (promemoria riscossione crediti)
+   ============================================================ */
+
+const isNative = Capacitor.isNativePlatform()
+
+// Le notifiche locali richiedono un id numerico: lo deriviamo dall'id (stringa) del movimento
+const reminderNumId = (id) => {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return h % 2147483647
+}
+
+async function checkNotificationPermission() {
+  if (isNative) {
+    try {
+      const p = await LocalNotifications.checkPermissions()
+      return p.display
+    } catch {
+      return 'unknown'
+    }
+  }
+  return typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+}
+
+async function requestNotificationPermission() {
+  if (isNative) {
+    try {
+      const p = await LocalNotifications.requestPermissions()
+      return p.display
+    } catch {
+      return 'denied'
+    }
+  }
+  if (typeof Notification === 'undefined') return 'unsupported'
+  try {
+    return await Notification.requestPermission()
+  } catch {
+    return 'denied'
+  }
+}
+
+// Pianifica un promemoria per riscuotere un credito (solo per movimenti di tipo "loanGiven")
+function scheduleDebtReminder(entry, contactName) {
+  if (!entry.reminderDate) return
+  const target = new Date(entry.reminderDate)
+  const body = `${contactName} ti deve ${fmtCurrency(entry.amount)}. Ricordati di riscuotere!`
+
+  if (isNative) {
+    LocalNotifications.schedule({
+      notifications: [{
+        id: reminderNumId(entry.id),
+        title: 'Promemoria credito',
+        body,
+        schedule: { at: target, allowWhileIdle: true },
+      }],
+    }).catch(() => {})
+    return
+  }
+
+  // Fallback web: funziona solo mentre la pagina resta aperta (limite della Notification API)
+  if (typeof Notification === 'undefined') return
+  const ms = target.getTime() - Date.now()
+  if (ms <= 0) return
+  setTimeout(() => {
+    if (Notification.permission === 'granted') {
+      new Notification('Promemoria credito', { body })
+    }
+  }, ms)
+}
+
+function cancelDebtReminder(entryId) {
+  if (isNative) {
+    LocalNotifications.cancel({ notifications: [{ id: reminderNumId(entryId) }] }).catch(() => {})
+  }
+  // Su web non è possibile annullare un setTimeout dopo un reload della pagina (limitazione nota)
 }
 
 /* ============================================================
@@ -248,7 +333,7 @@ function CashFlowChart({ theme, data }) {
    SCHERMATA: DASHBOARD
    ============================================================ */
 
-function DashboardScreen({ theme, transactions, accounts, categories, contacts, debtEntries }) {
+function DashboardScreen({ theme, transactions, accounts, categories, contacts, debtEntries, profile }) {
   const now = new Date()
 
   const totalBalance = useMemo(() => {
@@ -300,6 +385,9 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
 
   return (
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {profile?.name && (
+        <div style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>Ciao, {profile.name} 👋</div>
+      )}
       <div style={{
         background: `linear-gradient(135deg, ${theme.primary}, #7c3aed)`, borderRadius: 22, padding: 22,
       }}>
@@ -636,6 +724,14 @@ function AddContactModal({ theme, onClose, onSave }) {
 
 function SettingsScreen({ theme, settings, setSettings, exportBackup, importBackup, exportCsv }) {
   const fileInputRef = React.useRef(null)
+  const [notifPermission, setNotifPermission] = useState('unknown')
+
+  useEffect(() => { checkNotificationPermission().then(setNotifPermission) }, [])
+
+  const enableNotifications = async () => {
+    const p = await requestNotificationPermission()
+    setNotifPermission(p)
+  }
 
   return (
     <div style={{ padding: 16, paddingBottom: 90 }}>
@@ -676,6 +772,26 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
         </div>
       </div>
 
+      <div style={{ fontSize: 13, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>NOTIFICHE</div>
+      <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginBottom: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Bell size={18} color={theme.subtext} />
+          <div style={{ flex: 1 }}>
+            <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Promemoria crediti</div>
+            <div style={{ color: theme.subtext, fontSize: 12 }}>
+              {notifPermission === 'granted' ? 'Notifiche attive' : 'Attiva per ricevere i promemoria di riscossione'}
+            </div>
+          </div>
+          {notifPermission === 'granted' ? (
+            <Check size={18} color={theme.income} />
+          ) : (
+            <button onClick={enableNotifications} style={{ padding: '8px 14px', borderRadius: 10, border: 'none', background: theme.primary, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+              Abilita
+            </button>
+          )}
+        </div>
+      </div>
+
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>BACKUP DATI</div>
       <div style={{ background: theme.card, borderRadius: 16, padding: 6, marginBottom: 22 }}>
         <div onClick={exportBackup} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, cursor: 'pointer' }}>
@@ -699,6 +815,297 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
 
       <div style={{ textAlign: 'center', color: theme.subtext, fontSize: 11, marginTop: 30, lineHeight: 1.6 }}>
         Tutti i dati restano esclusivamente su questo dispositivo.<br />Nessun server, nessun cloud.
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   WELCOME PAGE (ONBOARDING)
+   ============================================================ */
+
+function ProgressDots({ theme, step, total }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
+      {Array.from({ length: total }, (_, i) => i + 1).map(i => (
+        <span key={i} style={{
+          width: i === step ? 18 : 6, height: 6, borderRadius: 999,
+          background: i === step ? theme.primary : theme.border, transition: 'all .2s',
+        }} />
+      ))}
+    </div>
+  )
+}
+
+function Onboarding({ theme, onFinish }) {
+  const [step, setStep] = useState(1)
+
+  // Step 1 — profilo e privacy
+  const [name, setName] = useState('')
+  const [birthYear, setBirthYear] = useState('')
+  const [netWorth, setNetWorth] = useState('')
+  const [salary, setSalary] = useState('')
+  const [accepted, setAccepted] = useState(false)
+  const [error, setError] = useState('')
+
+  // Step 2 — categorie di spesa preimpostate
+  const [cats, setCats] = useState(() => DEFAULT_CATEGORIES.map(c => ({ ...c })))
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatColor, setNewCatColor] = useState(CATEGORY_PALETTE[0])
+  const [editingColorId, setEditingColorId] = useState(null)
+
+  // Step 3 — contatti crediti/debiti
+  const [onboardContacts, setOnboardContacts] = useState([])
+  const [contactName, setContactName] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
+
+  useEffect(() => { window.scrollTo(0, 0) }, [step])
+
+  const goStep2 = () => {
+    if (!name.trim()) { setError('Inserisci il tuo nome'); return }
+    if (!accepted) { setError("Devi accettare l'informativa per continuare"); return }
+    setError('')
+    setStep(2)
+  }
+
+  const renameCategory = (id, val) => setCats(prev => prev.map(c => c.id === id ? { ...c, name: val } : c))
+  const recolorCategory = (id, color) => setCats(prev => prev.map(c => c.id === id ? { ...c, color } : c))
+  const removeCategory = (id) => setCats(prev => prev.filter(c => c.id !== id))
+  const addCategory = () => {
+    if (!newCatName.trim()) return
+    setCats(prev => [...prev, { id: uuid(), name: newCatName.trim(), icon: 'other', color: newCatColor, isExpense: true }])
+    setNewCatName('')
+  }
+
+  const addOnboardContact = () => {
+    if (!contactName.trim()) return
+    setOnboardContacts(prev => [...prev, { id: uuid(), name: contactName.trim(), phone: contactPhone.trim() }])
+    setContactName('')
+    setContactPhone('')
+  }
+  const removeOnboardContact = (id) => setOnboardContacts(prev => prev.filter(c => c.id !== id))
+
+  const finish = () => {
+    onFinish({
+      profile: {
+        name: name.trim(),
+        birthYear: birthYear ? parseInt(birthYear, 10) : null,
+        netWorth: netWorth ? parseFloat(netWorth.replace(',', '.')) : 0,
+        salary: salary ? parseFloat(salary.replace(',', '.')) : 0,
+      },
+      categories: cats,
+      contacts: onboardContacts,
+    })
+  }
+
+  const expenseCats = cats.filter(c => c.isExpense)
+
+  return (
+    <div style={{ height: '100%', background: theme.bg, display: 'flex', flexDirection: 'column', padding: '32px 20px 20px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexShrink: 0 }}>
+        <div style={{ width: 40 }} />
+        <ProgressDots theme={theme} step={step} total={3} />
+        {step > 1 ? (
+          <button
+            onClick={() => step < 3 ? setStep(step + 1) : finish()}
+            style={{ background: 'none', border: 'none', color: theme.subtext, fontSize: 13, cursor: 'pointer' }}
+          >
+            Salta
+          </button>
+        ) : <div style={{ width: 40 }} />}
+      </div>
+
+      <div style={{ flex: 1 }}>
+        {step === 1 && (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: 20, background: theme.primary,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+              }}>
+                <Wallet size={30} color="#fff" />
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: theme.text }}>Benvenuto in Money Tracker</div>
+              <div style={{ fontSize: 13, color: theme.subtext, marginTop: 8, lineHeight: 1.5 }}>
+                Qualche informazione per iniziare — puoi modificare tutto in qualsiasi momento dalle Impostazioni.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Nome</div>
+                <input style={inputStyle(theme)} value={name} onChange={(e) => setName(e.target.value)} placeholder="Il tuo nome" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Anno di nascita (opzionale)</div>
+                <input type="number" inputMode="numeric" style={inputStyle(theme)} value={birthYear} onChange={(e) => setBirthYear(e.target.value)} placeholder="es. 1994" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Patrimonio attuale € (opzionale)</div>
+                <input inputMode="decimal" style={inputStyle(theme)} value={netWorth} onChange={(e) => setNetWorth(e.target.value)} placeholder="es. 5000" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Stipendio mensile € (opzionale)</div>
+                <input inputMode="decimal" style={inputStyle(theme)} value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="es. 1500" />
+              </div>
+
+              <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <Lock size={16} color={theme.text} />
+                  <div style={{ color: theme.text, fontSize: 13, fontWeight: 700 }}>Privacy e utilizzo dei dati</div>
+                </div>
+                <div style={{ maxHeight: 160, overflowY: 'auto', color: theme.subtext, fontSize: 12, lineHeight: 1.6, paddingRight: 4 }}>
+                  <p style={{ margin: '0 0 8px' }}>
+                    Money Tracker funziona interamente offline: nessun server, nessun account, nessuna connessione a internet richiesta per usarla.
+                  </p>
+                  <p style={{ margin: '0 0 8px' }}>
+                    <b style={{ color: theme.text }}>Cosa raccogliamo:</b> nome, anno di nascita, patrimonio e stipendio (solo se li inserisci — tutti opzionali tranne il nome), le transazioni, i contatti e i movimenti di credito/debito che registri.
+                  </p>
+                  <p style={{ margin: '0 0 8px' }}>
+                    <b style={{ color: theme.text }}>Dove vengono salvati:</b> esclusivamente nella memoria locale del tuo telefono. Nessun dato viene mai inviato, sincronizzato o condiviso con server esterni o terze parti.
+                  </p>
+                  <p style={{ margin: '0 0 8px' }}>
+                    <b style={{ color: theme.text }}>Cookie e tracciamento:</b> nessuno. Nessuna pubblicità, nessuna analisi statistica del comportamento.
+                  </p>
+                  <p style={{ margin: '0 0 8px' }}>
+                    <b style={{ color: theme.text }}>Notifiche:</b> i promemoria di riscossione crediti restano sul dispositivo e richiedono il permesso di notifica del sistema, revocabile in qualsiasi momento dalle impostazioni del telefono.
+                  </p>
+                  <p style={{ margin: 0 }}>
+                    <b style={{ color: theme.text }}>Cancellazione:</b> puoi eliminare tutti i dati in ogni momento disinstallando l'app o da Impostazioni Android → App → Money Tracker → Cancella dati.
+                  </p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 12, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)}
+                    style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }}
+                  />
+                  <span style={{ color: theme.text, fontSize: 12, lineHeight: 1.4 }}>Ho letto e accetto questa informativa</span>
+                </label>
+              </div>
+
+              {error && <div style={{ color: theme.expense, fontSize: 12 }}>{error}</div>}
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>Categorie di spesa</div>
+              <div style={{ fontSize: 13, color: theme.subtext, marginTop: 6, lineHeight: 1.5 }}>
+                Sono già pronte con nome e colore: modificale, eliminale o aggiungine di nuove — potrai sempre cambiarle dopo dalle Impostazioni.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+              {expenseCats.map(c => (
+                <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.card, borderRadius: 14, padding: 10 }}>
+                    <button
+                      onClick={() => setEditingColorId(editingColorId === c.id ? null : c.id)}
+                      style={{ width: 26, height: 26, borderRadius: '50%', background: c.color, border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                    />
+                    <input
+                      value={c.name} onChange={(e) => renameCategory(c.id, e.target.value)}
+                      style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: theme.text, fontSize: 14, fontWeight: 600 }}
+                    />
+                    <button onClick={() => removeCategory(c.id)} style={iconBtnStyle(theme)}><Trash2 size={15} color={theme.expense} /></button>
+                  </div>
+                  {editingColorId === c.id && (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 2px 4px' }}>
+                      {CATEGORY_PALETTE.map(col => (
+                        <button
+                          key={col} onClick={() => { recolorCategory(c.id, col); setEditingColorId(null) }}
+                          style={{ width: 24, height: 24, borderRadius: '50%', background: col, border: 'none', cursor: 'pointer' }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {expenseCats.length === 0 && (
+                <div style={{ color: theme.subtext, fontSize: 13, padding: '8px 0' }}>Nessuna categoria di spesa attiva.</div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Nuova categoria</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input style={{ ...inputStyle(theme), flex: 1 }} placeholder="es. Studio, Palestra..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} />
+              <button onClick={addCategory} style={{ ...iconBtnStyle(theme), width: 46, background: theme.primary }}>
+                <Plus size={18} color="#fff" />
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {CATEGORY_PALETTE.map(col => (
+                <button
+                  key={col} onClick={() => setNewCatColor(col)}
+                  style={{
+                    width: 24, height: 24, borderRadius: '50%', background: col, cursor: 'pointer',
+                    border: newCatColor === col ? `2px solid ${theme.text}` : '2px solid transparent',
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>Contatti</div>
+              <div style={{ fontSize: 13, color: theme.subtext, marginTop: 6, lineHeight: 1.5 }}>
+                Aggiungi le persone con cui hai crediti o debiti in sospeso — puoi aggiungerne altri in qualsiasi momento.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input style={{ ...inputStyle(theme), flex: 1 }} placeholder="Nome" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+              <input style={{ ...inputStyle(theme), width: 110 }} placeholder="Telefono" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} />
+              <button onClick={addOnboardContact} style={{ ...iconBtnStyle(theme), width: 46, background: theme.primary }}>
+                <Plus size={18} color="#fff" />
+              </button>
+            </div>
+
+            {onboardContacts.length === 0 && (
+              <div style={{ color: theme.subtext, fontSize: 13, padding: '12px 0' }}>Nessun contatto ancora — puoi anche saltare questo passaggio.</div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {onboardContacts.map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.card, borderRadius: 14, padding: 10 }}>
+                  <div style={{ flex: 1, color: theme.text, fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                  {c.phone && <div style={{ color: theme.subtext, fontSize: 12 }}>{c.phone}</div>}
+                  <button onClick={() => removeOnboardContact(c.id)} style={iconBtnStyle(theme)}><Trash2 size={15} color={theme.expense} /></button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, flexShrink: 0 }}>
+        {step > 1 ? (
+          <button
+            onClick={() => setStep(step - 1)}
+            style={{ padding: '12px 22px', borderRadius: 14, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Indietro
+          </button>
+        ) : <span />}
+        {step === 1 && (
+          <button onClick={goStep2} style={{ padding: '12px 28px', borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+            Avanti
+          </button>
+        )}
+        {step === 2 && (
+          <button onClick={() => setStep(3)} style={{ padding: '12px 28px', borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+            Avanti
+          </button>
+        )}
+        {step === 3 && (
+          <button onClick={finish} style={{ padding: '12px 28px', borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+            Fine
+          </button>
+        )}
       </div>
     </div>
   )
@@ -780,11 +1187,13 @@ export default function App() {
   const [showAddContact, setShowAddContact] = useState(false)
 
   const [settings, setSettings] = useLocalStorageState('mt_settings', { theme: 'system', lockEnabled: false, pin: '' })
-  const [categories] = useLocalStorageState('mt_categories', DEFAULT_CATEGORIES)
-  const [accounts] = useLocalStorageState('mt_accounts', DEFAULT_ACCOUNTS)
+  const [categories, setCategories] = useLocalStorageState('mt_categories', DEFAULT_CATEGORIES)
+  const [accounts, setAccounts] = useLocalStorageState('mt_accounts', DEFAULT_ACCOUNTS)
   const [transactions, setTransactions] = useLocalStorageState('mt_transactions', [])
   const [contacts, setContacts] = useLocalStorageState('mt_contacts', [])
   const [debtEntries, setDebtEntries] = useLocalStorageState('mt_debtEntries', [])
+  const [profile, setProfile] = useLocalStorageState('mt_profile', { name: '', birthYear: null, netWorth: 0, salary: 0 })
+  const [onboarding, setOnboarding] = useLocalStorageState('mt_onboarding', { onboarded: false })
 
   const theme = useTheme(settings.theme)
 
@@ -798,8 +1207,34 @@ export default function App() {
     setContacts(prev => prev.filter(c => c.id !== id))
     setDebtEntries(prev => prev.filter(e => e.contactId !== id))
   }
-  const addDebtEntry = (contactId, entry) => setDebtEntries(prev => [...prev, { ...entry, contactId }])
-  const deleteDebtEntry = (id) => setDebtEntries(prev => prev.filter(e => e.id !== id))
+  const addDebtEntry = (contactId, entry) => {
+    setDebtEntries(prev => [...prev, { ...entry, contactId }])
+    if (entry.reminderDate && entry.type === 'loanGiven') {
+      const contact = contacts.find(c => c.id === contactId)
+      scheduleDebtReminder(entry, contact?.name || 'Contatto')
+    }
+  }
+  const deleteDebtEntry = (id) => {
+    setDebtEntries(prev => prev.filter(e => e.id !== id))
+    cancelDebtReminder(id)
+  }
+
+  const finishOnboarding = ({ profile: p, categories: cats, contacts: newContacts }) => {
+    setProfile(p)
+    setCategories(cats)
+    if (newContacts.length) setContacts(prev => [...prev, ...newContacts])
+    if (p.netWorth > 0) {
+      setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth } : a))
+    }
+    if (p.salary > 0) {
+      addTransaction({
+        id: uuid(), amount: p.salary, isExpense: false, categoryId: 'salary', accountId: 'bank',
+        date: new Date().toISOString(), notes: 'Stipendio (impostato in onboarding)',
+      })
+    }
+    setOnboarding({ onboarded: true })
+    requestNotificationPermission().catch(() => {})
+  }
 
   const exportBackup = () => {
     const data = { version: 1, exportedAt: new Date().toISOString(), categories, accounts, transactions, contacts, debtEntries }
@@ -845,6 +1280,10 @@ export default function App() {
     reader.readAsText(file)
   }
 
+  if (!onboarding.onboarded) {
+    return <Onboarding theme={theme} onFinish={finishOnboarding} />
+  }
+
   if (settings.lockEnabled && !unlocked) {
     return <LockScreen theme={theme} pin={settings.pin} onUnlock={() => setUnlocked(true)} />
   }
@@ -856,7 +1295,7 @@ export default function App() {
       <style>{`@keyframes slideUp { from { transform: translateY(30px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }`}</style>
 
       {tab === 'dashboard' && (
-        <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} />
+        <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} profile={profile} />
       )}
 
       {tab === 'transactions' && (
