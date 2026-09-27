@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Money Tracker</title>
+    <link rel="icon" type="image/png" href="./icon-192.png" />
+    <script>
+      // Mostra un messaggio leggibile invece di uno schermo grigio se qualcosa va storto
+      window.addEventListener('error', function (e) {
+        var root = document.getElementById('root');
+        if (root && !root.hasChildNodes()) {
+          root.innerHTML =
+            '<div style="font-family: sans-serif; padding: 24px; color: #fff; background:#0f172a; min-height:100vh;">' +
+            '<h2>Si è verificato un errore</h2>' +
+            '<p style="opacity:.8; white-space: pre-wrap;">' + (e.message || 'Errore sconosciuto') + '</p>' +
+            '</div>';
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

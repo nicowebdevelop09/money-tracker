@@ -1,0 +1,9 @@
+{
+  "appId": "com.moneytracker.app",
+  "appName": "Money Tracker",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  }
+}
