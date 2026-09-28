@@ -1,5 +1,69 @@
 # Changelog
 
+## v1.3.0 — 2026-09-28
+Sezione Profilo, selettore colore interno e notifiche di riscossione configurabili.
+
+- **Nuova scheda Profilo** (barra in basso): modifica in qualsiasi momento i dati
+  chiesti all'avvio — nome, anno di nascita, patrimonio di partenza e stipendio
+  mensile. Il patrimonio aggiorna il saldo iniziale del Conto Corrente.
+- **Categorie modificabili dal Profilo** (spese ed entrate): cambia nome e colore,
+  aggiungi nuove categorie o eliminale. Ogni transazione salva nome, colore e icona
+  della categoria al momento della creazione, quindi eliminare una categoria non
+  rovina lo storico (movimenti, grafici ed export CSV restano corretti).
+- **Selettore colore `SwatchPicker`** fatto in casa (niente `<input type="color">`
+  nativo): cerchio col colore attuale -> pannello con slider Tonalità (0-360°) e
+  Saturazione (0-100%), Valore fisso al 100%. Anteprima al centro, Annulla a sinistra
+  e Conferma a destra: il colore cambia solo dopo la conferma. Salvataggio in
+  esadecimale (es. `#FF0000`). Il selettore di una nuova categoria riparte da rosso
+  puro (`PURE_RED`) dopo ogni creazione. Usato anche nell'onboarding (passo 2).
+  Nuove funzioni `hsvToHex`, `hexToHueSat` e stile `.dt-hs-slider`.
+- **Notifiche di riscossione**: interruttore on/off nel Profilo (spegnendolo annulla
+  i promemoria già pianificati, riaccendendolo rischedula quelli futuri), stato del
+  permesso di sistema con pulsante per concederlo e orario configurabile del
+  promemoria (prima la notifica scattava alle 00:00 UTC). Sui movimenti compare 🔔
+  con la data del promemoria. Eliminando un contatto vengono annullati anche i suoi
+  promemoria. La sezione "Notifiche" delle Impostazioni si è spostata nel Profilo.
+- Il backup JSON (ora versione 2) include anche profilo, categorie e conti, e
+  l'import li ripristina.
+
+## v1.2.0 — 2026-09-27
+Welcome page (onboarding) e notifiche reali per i promemoria crediti.
+
+- Nuova schermata di benvenuto al primo avvio, in 3 passaggi con indicatore di
+  avanzamento e pulsante "Salta" (dal passo 2 in poi):
+  1. **Profilo e privacy** — nome (obbligatorio), anno di nascita, patrimonio
+     attuale e stipendio mensile (opzionali), più l'informativa privacy con
+     accettazione obbligatoria per proseguire.
+  2. **Categorie di spesa** — le categorie predefinite (nome e colore) già
+     pronte, modificabili o eliminabili inline, con possibilità di aggiungerne
+     di nuove scegliendo un colore dalla palette.
+  3. **Contatti** — aggiunta rapida delle persone con cui si hanno crediti/debiti
+     in sospeso, passaggio facoltativo.
+  - Il patrimonio inserito imposta il saldo iniziale del conto "Conto Corrente";
+    lo stipendio inserito genera automaticamente una prima transazione di
+    entrata.
+- **Notifiche locali reali** per i promemoria di riscossione crediti (prestiti
+  erogati con data di promemoria): usa `@capacitor/local-notifications` su
+  Android/iOS nativi, con fallback alla Web Notification API in versione
+  browser. Nuova sezione "Notifiche" nelle Impostazioni per abilitare il
+  permesso manualmente.
+- Il nome inserito in onboarding compare come saluto in cima alla Dashboard.
+
+## v1.1.0 — 2026-09-27
+Aggiornamento ai workflow GitHub Actions (versioni personalizzate).
+
+- `build-apk.yml`: aggiunto `android-actions/setup-android` per il setup esplicito
+  dell'SDK Android; icone generate automaticamente da `public/icon-512.png`
+  tramite `@capacitor/assets` invece di gestirle a mano; firma dell'APK ora
+  iniettata direttamente ai flag di Gradle (`-Pandroid.injected.signing.*`),
+  eliminando il patch manuale di `build.gradle`; aggiornate le versioni delle
+  action (`checkout@v5`, `setup-node@v5`, `upload-artifact@v6`).
+- `generate-keystore.yml`: il keystore ora si chiama `debug.keystore` con alias
+  `androiddebugkey` e password `android` (coerente con le convenzioni Android
+  standard), stampato anche in chiaro nel log oltre che come artifact di backup.
+- `deploy.yml`: aggiornate le versioni delle action (`checkout@v7`,
+  `setup-node@v6`), `cancel-in-progress` ora `true` per Pages.
+
 ## v1.0.0 — 2026-09-27
 Prima versione.
 
