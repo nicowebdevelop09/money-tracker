@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.3.0 — 2026-09-28
+## v1.3 — 2026-09-28
 Sezione Profilo, selettore colore interno e notifiche di riscossione configurabili.
 
 - **Nuova scheda Profilo** (barra in basso): modifica in qualsiasi momento i dati
@@ -26,7 +26,7 @@ Sezione Profilo, selettore colore interno e notifiche di riscossione configurabi
 - Il backup JSON (ora versione 2) include anche profilo, categorie e conti, e
   l'import li ripristina.
 
-## v1.2.0 — 2026-09-27
+## v1.2 — 2026-09-27
 Welcome page (onboarding) e notifiche reali per i promemoria crediti.
 
 - Nuova schermata di benvenuto al primo avvio, in 3 passaggi con indicatore di
@@ -49,7 +49,7 @@ Welcome page (onboarding) e notifiche reali per i promemoria crediti.
   permesso manualmente.
 - Il nome inserito in onboarding compare come saluto in cima alla Dashboard.
 
-## v1.1.0 — 2026-09-27
+## v1.1 — 2026-09-27
 Aggiornamento ai workflow GitHub Actions (versioni personalizzate).
 
 - `build-apk.yml`: aggiunto `android-actions/setup-android` per il setup esplicito
@@ -64,7 +64,7 @@ Aggiornamento ai workflow GitHub Actions (versioni personalizzate).
 - `deploy.yml`: aggiornate le versioni delle action (`checkout@v7`,
   `setup-node@v6`), `cancel-in-progress` ora `true` per Pages.
 
-## v1.0.0 — 2026-09-27
+## v1.0 — 2026-09-27
 Prima versione.
 
 - Modulo Cash Flow: aggiunta rapida transazioni (entrate/uscite), categorie con
