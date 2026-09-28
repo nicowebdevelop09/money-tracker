@@ -9,7 +9,7 @@ import {
   ArrowUpRight, ArrowDownRight, Utensils, Car, Home, HeartPulse, Film,
   ShoppingBag, FileText, MoreHorizontal, Briefcase, Gift, DollarSign,
   UserPlus, Trash2, Calendar, Bell, Lock, Upload, Download, Sun, Moon,
-  Monitor, Check, ChevronLeft, Wallet,
+  Monitor, Check, ChevronLeft, Wallet, User,
 } from 'lucide-react'
 
 /* ============================================================
@@ -42,10 +42,8 @@ const DEFAULT_ACCOUNTS = [
   { id: 'card', name: 'Carta', initialBalance: 0 },
 ]
 
-const CATEGORY_PALETTE = [
-  '#f97316', '#3b82f6', '#92400e', '#ef4444', '#a855f7', '#ec4899',
-  '#14b8a6', '#6b7280', '#22c55e', '#f59e0b', '#84cc16', '#06b6d4', '#8b5cf6', '#ea580c',
-]
+// Colore di partenza del selettore per ogni nuovo elemento (categoria, ecc.)
+const PURE_RED = '#FF0000'
 
 const DEBT_TYPES = {
   loanGiven: { label: 'Prestito erogato', sign: 1 },
@@ -67,6 +65,57 @@ const fmtDate = (iso) =>
   new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' })
 
 const monthKey = (d) => `${d.getFullYear()}-${d.getMonth()}`
+
+// --- Colori: selettore Tonalità (0-360) + Saturazione (0-100), Valore fisso al 100% ---
+function hsvToHex(h, s) {
+  const S = Math.max(0, Math.min(100, s)) / 100
+  const H = (((h % 360) + 360) % 360) / 60
+  const c = S // v * s con v = 1
+  const x = c * (1 - Math.abs((H % 2) - 1))
+  const m = 1 - c
+  let r = 0, g = 0, b = 0
+  if (H < 1) [r, g, b] = [c, x, 0]
+  else if (H < 2) [r, g, b] = [x, c, 0]
+  else if (H < 3) [r, g, b] = [0, c, x]
+  else if (H < 4) [r, g, b] = [0, x, c]
+  else if (H < 5) [r, g, b] = [x, 0, c]
+  else [r, g, b] = [c, 0, x]
+  const to = (n) => Math.round((n + m) * 255).toString(16).padStart(2, '0')
+  return `#${to(r)}${to(g)}${to(b)}`.toUpperCase()
+}
+
+function hexToHueSat(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  if (!m) return { h: 0, s: 100 }
+  const n = parseInt(m[1], 16)
+  const r = ((n >> 16) & 255) / 255
+  const g = ((n >> 8) & 255) / 255
+  const b = (n & 255) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  let h = 0
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  const sat = max === 0 ? 0 : (d / max) * 100
+  return { h: Math.round(h), s: Math.round(sat) }
+}
+
+// Nome/colore/icona di una transazione: categoria attuale se esiste, altrimenti
+// i valori salvati al momento della creazione (lo storico non si rovina se la categoria viene eliminata)
+function catView(t, categories) {
+  const cat = categories.find(c => c.id === t.categoryId)
+  return {
+    name: cat?.name || t.categoryName || 'Senza categoria',
+    color: cat?.color || t.categoryColor || '#6b7280',
+    icon: cat?.icon || t.categoryIcon || 'other',
+  }
+}
 
 function loadJSON(key, fallback) {
   try {
@@ -127,10 +176,15 @@ async function requestNotificationPermission() {
   }
 }
 
+// Timer del fallback web (per poterli annullare) e limite massimo di setTimeout
+const webTimers = new Map()
+const MAX_TIMEOUT = 2147483647
+
 // Pianifica un promemoria per riscuotere un credito (solo per movimenti di tipo "loanGiven")
 function scheduleDebtReminder(entry, contactName) {
   if (!entry.reminderDate) return
   const target = new Date(entry.reminderDate)
+  if (isNaN(target.getTime()) || target.getTime() <= Date.now()) return
   const body = `${contactName} ti deve ${fmtCurrency(entry.amount)}. Ricordati di riscuotere!`
 
   if (isNative) {
@@ -148,19 +202,22 @@ function scheduleDebtReminder(entry, contactName) {
   // Fallback web: funziona solo mentre la pagina resta aperta (limite della Notification API)
   if (typeof Notification === 'undefined') return
   const ms = target.getTime() - Date.now()
-  if (ms <= 0) return
-  setTimeout(() => {
+  if (ms > MAX_TIMEOUT) return
+  clearTimeout(webTimers.get(entry.id))
+  webTimers.set(entry.id, setTimeout(() => {
+    webTimers.delete(entry.id)
     if (Notification.permission === 'granted') {
       new Notification('Promemoria credito', { body })
     }
-  }, ms)
+  }, ms))
 }
 
 function cancelDebtReminder(entryId) {
   if (isNative) {
     LocalNotifications.cancel({ notifications: [{ id: reminderNumId(entryId) }] }).catch(() => {})
   }
-  // Su web non è possibile annullare un setTimeout dopo un reload della pagina (limitazione nota)
+  clearTimeout(webTimers.get(entryId))
+  webTimers.delete(entryId)
 }
 
 /* ============================================================
@@ -281,6 +338,140 @@ function ChipButton({ active, color, theme, children, onClick, icon: Icon }) {
   )
 }
 
+const HS_SLIDER_CSS = `
+.dt-hs-slider{-webkit-appearance:none;appearance:none;width:100%;height:18px;border-radius:9px;outline:none;margin:0;border:1px solid rgba(128,128,128,.35)}
+.dt-hs-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:26px;height:26px;border-radius:50%;background:#fff;border:3px solid #111;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer}
+.dt-hs-slider::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:#fff;border:3px solid #111;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer}
+`
+
+// Selettore colore interno all'app (non usa <input type="color"> nativo):
+// cerchio col colore attuale -> pannello con Tonalità e Saturazione, Valore fisso al 100%.
+// Il colore cambia solo dopo "Conferma"; si salva come esadecimale (es. #FF0000).
+function SwatchPicker({ theme, value, onChange, size = 26 }) {
+  const [open, setOpen] = useState(false)
+  const [hs, setHs] = useState({ h: 0, s: 100 })
+
+  const openPicker = () => { setHs(hexToHueSat(value || PURE_RED)); setOpen(true) }
+  const draft = hsvToHex(hs.h, hs.s)
+  const label = { fontSize: 12, fontWeight: 600, color: theme.subtext, margin: '14px 0 8px' }
+
+  return (
+    <>
+      <button
+        type="button" onClick={openPicker} aria-label="Scegli colore"
+        style={{ width: size, height: size, borderRadius: '50%', background: value || PURE_RED, border: `2px solid ${theme.border}`, cursor: 'pointer', flexShrink: 0, padding: 0 }}
+      />
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <style>{HS_SLIDER_CSS}</style>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: theme.card, borderRadius: 20, padding: 20, width: '100%', maxWidth: 320 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>Scegli il colore</div>
+
+            <div style={label}>Tonalità</div>
+            <input
+              className="dt-hs-slider" type="range" min="0" max="360" value={hs.h}
+              onChange={(e) => setHs(p => ({ ...p, h: Number(e.target.value) }))}
+              style={{ background: 'linear-gradient(to right,#FF0000,#FFFF00,#00FF00,#00FFFF,#0000FF,#FF00FF,#FF0000)' }}
+            />
+
+            <div style={label}>Saturazione</div>
+            <input
+              className="dt-hs-slider" type="range" min="0" max="100" value={hs.s}
+              onChange={(e) => setHs(p => ({ ...p, s: Number(e.target.value) }))}
+              style={{ background: `linear-gradient(to right,#FFFFFF,${hsvToHex(hs.h, 100)})` }}
+            />
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 22 }}>
+              <button
+                type="button" onClick={() => setOpen(false)}
+                style={{ padding: '10px 16px', borderRadius: 12, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Annulla
+              </button>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: draft, border: `2px solid ${theme.border}`, margin: '0 auto' }} />
+                <div style={{ fontSize: 10, color: theme.subtext, marginTop: 4 }}>{draft}</div>
+              </div>
+              <button
+                type="button" onClick={() => { onChange(draft); setOpen(false) }}
+                style={{ padding: '10px 16px', borderRadius: 12, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Conferma
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// Elenco categorie modificabile (nome + colore + elimina) con form "nuova categoria".
+// Usato sia nell'onboarding (solo spese) sia nel Profilo (spese + entrate).
+function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false }) {
+  const [newName, setNewName] = useState('')
+  const [newColor, setNewColor] = useState(PURE_RED)
+  const [newIsExpense, setNewIsExpense] = useState(true)
+
+  const rename = (id, name) => onChange(cats.map(c => c.id === id ? { ...c, name } : c))
+  const recolor = (id, color) => onChange(cats.map(c => c.id === id ? { ...c, color } : c))
+  const add = () => {
+    if (!newName.trim()) return
+    onChange([...cats, {
+      id: uuid(), name: newName.trim(), icon: newIsExpense ? 'other' : 'income',
+      color: newColor, isExpense: newIsExpense,
+    }])
+    setNewName('')
+    setNewColor(PURE_RED) // dopo la creazione il selettore torna a rosso puro
+  }
+
+  const groups = includeIncome
+    ? [{ label: 'Spese', exp: true }, { label: 'Entrate', exp: false }]
+    : [{ label: null, exp: true }]
+
+  return (
+    <div>
+      {groups.map(g => {
+        const list = cats.filter(c => c.isExpense === g.exp)
+        return (
+          <div key={g.label || 'exp'} style={{ marginBottom: 16 }}>
+            {g.label && <div style={{ fontSize: 12, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>{g.label.toUpperCase()}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {list.map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.card, borderRadius: 14, padding: 10 }}>
+                  <SwatchPicker theme={theme} value={c.color} onChange={(col) => recolor(c.id, col)} />
+                  <input
+                    value={c.name} onChange={(e) => rename(c.id, e.target.value)}
+                    style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: theme.text, fontSize: 14, fontWeight: 600 }}
+                  />
+                  <button onClick={() => onRemove(c.id)} style={iconBtnStyle(theme)}><Trash2 size={15} color={theme.expense} /></button>
+                </div>
+              ))}
+              {list.length === 0 && <div style={{ color: theme.subtext, fontSize: 13, padding: '4px 0' }}>Nessuna categoria.</div>}
+            </div>
+          </div>
+        )
+      })}
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, margin: '4px 0 8px' }}>Nuova categoria</div>
+      {includeIncome && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <ChipButton active={newIsExpense} color={theme.expense} theme={theme} onClick={() => setNewIsExpense(true)}>Spesa</ChipButton>
+          <ChipButton active={!newIsExpense} color={theme.income} theme={theme} onClick={() => setNewIsExpense(false)}>Entrata</ChipButton>
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <SwatchPicker theme={theme} value={newColor} onChange={setNewColor} size={34} />
+        <input style={{ ...inputStyle(theme), flex: 1 }} placeholder="es. Studio, Palestra..." value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <button onClick={add} style={{ ...iconBtnStyle(theme), width: 46, background: theme.primary }}><Plus size={18} color="#fff" /></button>
+      </div>
+    </div>
+  )
+}
+
 /* ============================================================
    GRAFICI
    ============================================================ */
@@ -364,11 +555,12 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
     const map = {}
     transactions
       .filter(t => t.isExpense && monthKey(new Date(t.date)) === monthKey(now))
-      .forEach(t => { map[t.categoryId] = (map[t.categoryId] || 0) + t.amount })
-    return Object.entries(map).map(([catId, value]) => {
-      const cat = categories.find(c => c.id === catId)
-      return { name: cat?.name || catId, value, color: cat?.color || '#6b7280' }
-    })
+      .forEach(t => {
+        const v = catView(t, categories)
+        if (!map[t.categoryId]) map[t.categoryId] = { name: v.name, color: v.color, value: 0 }
+        map[t.categoryId].value += t.amount
+      })
+    return Object.values(map)
   }, [transactions, categories])
 
   const barData = useMemo(() => {
@@ -447,7 +639,7 @@ function TransactionsScreen({ theme, transactions, categories, accounts, onDelet
         <div key={date} style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, margin: '10px 0 8px' }}>{date}</div>
           {items.map(t => {
-            const cat = categories.find(c => c.id === t.categoryId)
+            const cat = catView(t, categories)
             const acc = accounts.find(a => a.id === t.accountId)
             return (
               <div
@@ -458,9 +650,9 @@ function TransactionsScreen({ theme, transactions, categories, accounts, onDelet
                   borderRadius: 16, padding: 12, marginBottom: 8, cursor: 'pointer',
                 }}
               >
-                <IconBubble name={cat?.icon} color={cat?.color || '#6b7280'} />
+                <IconBubble name={cat.icon} color={cat.color} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: theme.text, fontSize: 14 }}>{cat?.name || 'Senza categoria'}</div>
+                  <div style={{ fontWeight: 600, color: theme.text, fontSize: 14 }}>{cat.name}</div>
                   <div style={{ fontSize: 12, color: theme.subtext, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {acc?.name}{t.notes ? ` · ${t.notes}` : ''}
                   </div>
@@ -494,7 +686,11 @@ function AddTransactionModal({ theme, categories, accounts, onClose, onSave }) {
   const save = () => {
     const val = parseFloat(amount.replace(',', '.'))
     if (!val || val <= 0 || !categoryId || !accountId) { alert('Inserisci un importo valido e seleziona categoria/conto'); return }
-    onSave({ id: uuid(), amount: val, isExpense, categoryId, accountId, date: new Date(date).toISOString(), notes })
+    const cat = categories.find(c => c.id === categoryId)
+    onSave({
+      id: uuid(), amount: val, isExpense, categoryId, accountId, date: new Date(date).toISOString(), notes,
+      categoryName: cat?.name, categoryColor: cat?.color, categoryIcon: cat?.icon,
+    })
     onClose()
   }
 
@@ -584,7 +780,7 @@ function DebtsScreen({ theme, contacts, debtEntries, onOpenContact }) {
   )
 }
 
-function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete, onDeleteContact }) {
+function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete, onDeleteContact, reminderTime, remindersEnabled }) {
   const balance = entries.reduce((s, e) => s + e.amount * DEBT_TYPES[e.type].sign, 0)
   const [showAdd, setShowAdd] = useState(false)
 
@@ -630,7 +826,7 @@ function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete,
             <IconBubble name={positive ? 'income' : 'other'} color={positive ? theme.income : theme.expense} size={16} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>{DEBT_TYPES[e.type].label}</div>
-              <div style={{ fontSize: 12, color: theme.subtext }}>{fmtDate(e.date)}{e.notes ? ` · ${e.notes}` : ''}</div>
+              <div style={{ fontSize: 12, color: theme.subtext }}>{fmtDate(e.date)}{e.notes ? ` · ${e.notes}` : ''}{e.reminderDate ? ` · 🔔 ${new Date(e.reminderDate).toLocaleDateString('it-IT')}` : ''}</div>
             </div>
             <div style={{ fontWeight: 700, fontSize: 14, color: positive ? theme.income : theme.expense }}>
               {positive ? '+' : '-'}{fmtCurrency(e.amount)}
@@ -640,13 +836,13 @@ function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete,
       })}
 
       {showAdd && (
-        <AddDebtEntryModal theme={theme} onClose={() => setShowAdd(false)} onSave={(entry) => { onAdd(entry); setShowAdd(false) }} />
+        <AddDebtEntryModal theme={theme} reminderTime={reminderTime} remindersEnabled={remindersEnabled} onClose={() => setShowAdd(false)} onSave={(entry) => { onAdd(entry); setShowAdd(false) }} />
       )}
     </div>
   )
 }
 
-function AddDebtEntryModal({ theme, onClose, onSave }) {
+function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', remindersEnabled = true }) {
   const [type, setType] = useState('loanGiven')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
@@ -658,7 +854,7 @@ function AddDebtEntryModal({ theme, onClose, onSave }) {
     if (!val || val <= 0) { alert('Inserisci un importo valido'); return }
     onSave({
       id: uuid(), amount: val, type, date: new Date(date).toISOString(), notes,
-      reminderDate: reminderDate ? new Date(reminderDate).toISOString() : null,
+      reminderDate: reminderDate ? new Date(`${reminderDate}T${reminderTime}:00`).toISOString() : null,
     })
   }
 
@@ -682,7 +878,13 @@ function AddDebtEntryModal({ theme, onClose, onSave }) {
       {type === 'loanGiven' && (
         <>
           <div style={{ fontSize: 13, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Promemoria riscossione (opzionale)</div>
-          <input type="date" style={{ ...inputStyle(theme), marginBottom: 18 }} value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} />
+          <input type="date" style={{ ...inputStyle(theme), marginBottom: reminderDate || !remindersEnabled ? 8 : 18 }} value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} />
+          {reminderDate && remindersEnabled && (
+            <div style={{ fontSize: 11, color: theme.subtext, marginBottom: 18 }}>Riceverai la notifica alle {reminderTime} del giorno scelto.</div>
+          )}
+          {!remindersEnabled && (
+            <div style={{ fontSize: 11, color: theme.expense, marginBottom: 18 }}>Le notifiche di riscossione sono disattivate: attivale dal Profilo.</div>
+          )}
         </>
       )}
 
@@ -724,14 +926,6 @@ function AddContactModal({ theme, onClose, onSave }) {
 
 function SettingsScreen({ theme, settings, setSettings, exportBackup, importBackup, exportCsv }) {
   const fileInputRef = React.useRef(null)
-  const [notifPermission, setNotifPermission] = useState('unknown')
-
-  useEffect(() => { checkNotificationPermission().then(setNotifPermission) }, [])
-
-  const enableNotifications = async () => {
-    const p = await requestNotificationPermission()
-    setNotifPermission(p)
-  }
 
   return (
     <div style={{ padding: 16, paddingBottom: 90 }}>
@@ -769,26 +963,6 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
               setSettings(s => ({ ...s, lockEnabled: false }))
             }
           }} style={{ width: 20, height: 20 }} />
-        </div>
-      </div>
-
-      <div style={{ fontSize: 13, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>NOTIFICHE</div>
-      <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginBottom: 22 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Bell size={18} color={theme.subtext} />
-          <div style={{ flex: 1 }}>
-            <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Promemoria crediti</div>
-            <div style={{ color: theme.subtext, fontSize: 12 }}>
-              {notifPermission === 'granted' ? 'Notifiche attive' : 'Attiva per ricevere i promemoria di riscossione'}
-            </div>
-          </div>
-          {notifPermission === 'granted' ? (
-            <Check size={18} color={theme.income} />
-          ) : (
-            <button onClick={enableNotifications} style={{ padding: '8px 14px', borderRadius: 10, border: 'none', background: theme.primary, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-              Abilita
-            </button>
-          )}
         </div>
       </div>
 
@@ -850,9 +1024,6 @@ function Onboarding({ theme, onFinish }) {
 
   // Step 2 — categorie di spesa preimpostate
   const [cats, setCats] = useState(() => DEFAULT_CATEGORIES.map(c => ({ ...c })))
-  const [newCatName, setNewCatName] = useState('')
-  const [newCatColor, setNewCatColor] = useState(CATEGORY_PALETTE[0])
-  const [editingColorId, setEditingColorId] = useState(null)
 
   // Step 3 — contatti crediti/debiti
   const [onboardContacts, setOnboardContacts] = useState([])
@@ -866,15 +1037,6 @@ function Onboarding({ theme, onFinish }) {
     if (!accepted) { setError("Devi accettare l'informativa per continuare"); return }
     setError('')
     setStep(2)
-  }
-
-  const renameCategory = (id, val) => setCats(prev => prev.map(c => c.id === id ? { ...c, name: val } : c))
-  const recolorCategory = (id, color) => setCats(prev => prev.map(c => c.id === id ? { ...c, color } : c))
-  const removeCategory = (id) => setCats(prev => prev.filter(c => c.id !== id))
-  const addCategory = () => {
-    if (!newCatName.trim()) return
-    setCats(prev => [...prev, { id: uuid(), name: newCatName.trim(), icon: 'other', color: newCatColor, isExpense: true }])
-    setNewCatName('')
   }
 
   const addOnboardContact = () => {
@@ -897,8 +1059,6 @@ function Onboarding({ theme, onFinish }) {
       contacts: onboardContacts,
     })
   }
-
-  const expenseCats = cats.filter(c => c.isExpense)
 
   return (
     <div style={{ height: '100%', background: theme.bg, display: 'flex', flexDirection: 'column', padding: '32px 20px 20px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -927,7 +1087,7 @@ function Onboarding({ theme, onFinish }) {
               </div>
               <div style={{ fontSize: 22, fontWeight: 800, color: theme.text }}>Benvenuto in Money Tracker</div>
               <div style={{ fontSize: 13, color: theme.subtext, marginTop: 8, lineHeight: 1.5 }}>
-                Qualche informazione per iniziare — puoi modificare tutto in qualsiasi momento dalle Impostazioni.
+                Qualche informazione per iniziare — puoi modificare tutto in qualsiasi momento dal Profilo.
               </div>
             </div>
 
@@ -993,59 +1153,11 @@ function Onboarding({ theme, onFinish }) {
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>Categorie di spesa</div>
               <div style={{ fontSize: 13, color: theme.subtext, marginTop: 6, lineHeight: 1.5 }}>
-                Sono già pronte con nome e colore: modificale, eliminale o aggiungine di nuove — potrai sempre cambiarle dopo dalle Impostazioni.
+                Sono già pronte con nome e colore: modificale, eliminale o aggiungine di nuove — potrai sempre cambiarle dopo dal Profilo.
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-              {expenseCats.map(c => (
-                <div key={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.card, borderRadius: 14, padding: 10 }}>
-                    <button
-                      onClick={() => setEditingColorId(editingColorId === c.id ? null : c.id)}
-                      style={{ width: 26, height: 26, borderRadius: '50%', background: c.color, border: 'none', cursor: 'pointer', flexShrink: 0 }}
-                    />
-                    <input
-                      value={c.name} onChange={(e) => renameCategory(c.id, e.target.value)}
-                      style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: theme.text, fontSize: 14, fontWeight: 600 }}
-                    />
-                    <button onClick={() => removeCategory(c.id)} style={iconBtnStyle(theme)}><Trash2 size={15} color={theme.expense} /></button>
-                  </div>
-                  {editingColorId === c.id && (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 2px 4px' }}>
-                      {CATEGORY_PALETTE.map(col => (
-                        <button
-                          key={col} onClick={() => { recolorCategory(c.id, col); setEditingColorId(null) }}
-                          style={{ width: 24, height: 24, borderRadius: '50%', background: col, border: 'none', cursor: 'pointer' }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {expenseCats.length === 0 && (
-                <div style={{ color: theme.subtext, fontSize: 13, padding: '8px 0' }}>Nessuna categoria di spesa attiva.</div>
-              )}
-            </div>
-
-            <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Nuova categoria</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input style={{ ...inputStyle(theme), flex: 1 }} placeholder="es. Studio, Palestra..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} />
-              <button onClick={addCategory} style={{ ...iconBtnStyle(theme), width: 46, background: theme.primary }}>
-                <Plus size={18} color="#fff" />
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {CATEGORY_PALETTE.map(col => (
-                <button
-                  key={col} onClick={() => setNewCatColor(col)}
-                  style={{
-                    width: 24, height: 24, borderRadius: '50%', background: col, cursor: 'pointer',
-                    border: newCatColor === col ? `2px solid ${theme.text}` : '2px solid transparent',
-                  }}
-                />
-              ))}
-            </div>
+            <CategoryEditor theme={theme} cats={cats} onChange={setCats} onRemove={(id) => setCats(prev => prev.filter(c => c.id !== id))} />
           </>
         )}
 
@@ -1112,6 +1224,141 @@ function Onboarding({ theme, onFinish }) {
 }
 
 /* ============================================================
+   SCHERMATA: PROFILO
+   ============================================================ */
+
+function ProfileScreen({
+  theme, profile, onSaveProfile, categories, onCategoriesChange, onRemoveCategory,
+  remindersEnabled, onToggleReminders, reminderTime, onChangeReminderTime,
+}) {
+  const [name, setName] = useState(profile.name || '')
+  const [birthYear, setBirthYear] = useState(profile.birthYear ? String(profile.birthYear) : '')
+  const [netWorth, setNetWorth] = useState(profile.netWorth ? String(profile.netWorth) : '')
+  const [salary, setSalary] = useState(profile.salary ? String(profile.salary) : '')
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [perm, setPerm] = useState('unknown')
+
+  useEffect(() => { checkNotificationPermission().then(setPerm) }, [])
+
+  const num = (v) => {
+    const n = parseFloat(String(v).replace(',', '.'))
+    return Number.isFinite(n) ? n : 0
+  }
+
+  const save = () => {
+    if (!name.trim()) { setError('Il nome è obbligatorio'); setSaved(false); return }
+    const y = birthYear ? parseInt(birthYear, 10) : null
+    if (y !== null && (y < 1900 || y > new Date().getFullYear())) { setError('Anno di nascita non valido'); setSaved(false); return }
+    setError('')
+    onSaveProfile({ name: name.trim(), birthYear: y, netWorth: num(netWorth), salary: num(salary) })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const toggle = async (on) => {
+    if (on) setPerm(await requestNotificationPermission())
+    onToggleReminders(on)
+  }
+
+  const askPermission = async () => setPerm(await requestNotificationPermission())
+
+  const fieldLabel = { fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }
+  const sectionTitle = { fontSize: 13, fontWeight: 700, color: theme.subtext, margin: '22px 0 8px' }
+
+  return (
+    <div style={{ padding: 16, paddingBottom: 90 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: 18, background: theme.primary, color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 800,
+        }}>
+          {(profile.name || '?').trim().charAt(0).toUpperCase() || '?'}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: theme.text }}>Profilo</div>
+      </div>
+
+      <div style={sectionTitle}>DATI PERSONALI</div>
+      <div style={{ background: theme.card, borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
+          <div style={fieldLabel}>Nome</div>
+          <input style={inputStyle(theme)} value={name} onChange={(e) => setName(e.target.value)} placeholder="Il tuo nome" />
+        </div>
+        <div>
+          <div style={fieldLabel}>Anno di nascita</div>
+          <input type="number" inputMode="numeric" style={inputStyle(theme)} value={birthYear} onChange={(e) => setBirthYear(e.target.value)} placeholder="es. 1994" />
+        </div>
+        <div>
+          <div style={fieldLabel}>Patrimonio di partenza €</div>
+          <input inputMode="decimal" style={inputStyle(theme)} value={netWorth} onChange={(e) => setNetWorth(e.target.value)} placeholder="es. 5000" />
+          <div style={{ fontSize: 11, color: theme.subtext, marginTop: 6, lineHeight: 1.4 }}>
+            È il saldo iniziale del Conto Corrente: le transazioni si sommano a questo valore.
+          </div>
+        </div>
+        <div>
+          <div style={fieldLabel}>Stipendio mensile €</div>
+          <input inputMode="decimal" style={inputStyle(theme)} value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="es. 1500" />
+        </div>
+        {error && <div style={{ color: theme.expense, fontSize: 12 }}>{error}</div>}
+        <button onClick={save} style={{
+          padding: 13, borderRadius: 14, border: 'none', background: saved ? theme.income : theme.primary,
+          color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+        }}>
+          {saved ? 'Salvato ✓' : 'Salva modifiche'}
+        </button>
+      </div>
+
+      <div style={sectionTitle}>NOTIFICHE RISCOSSIONE</div>
+      <div style={{ background: theme.card, borderRadius: 16, padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Bell size={18} color={theme.subtext} />
+          <div style={{ flex: 1 }}>
+            <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Promemoria crediti</div>
+            <div style={{ color: theme.subtext, fontSize: 12 }}>Una notifica alla data scelta su ogni prestito erogato</div>
+          </div>
+          <input type="checkbox" checked={remindersEnabled} onChange={(e) => toggle(e.target.checked)} style={{ width: 20, height: 20 }} />
+        </div>
+
+        {remindersEnabled && (
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: theme.text, fontSize: 13, fontWeight: 600 }}>Orario del promemoria</div>
+                <div style={{ color: theme.subtext, fontSize: 11 }}>Vale per i nuovi promemoria</div>
+              </div>
+              <input
+                type="time" value={reminderTime} style={{ ...inputStyle(theme), width: 120 }}
+                onChange={(e) => { if (e.target.value) onChangeReminderTime(e.target.value) }}
+              />
+            </div>
+
+            {perm === 'granted' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: theme.income, fontSize: 12 }}>
+                <Check size={14} /> Permesso di notifica concesso
+              </div>
+            ) : perm === 'denied' ? (
+              <div style={{ color: theme.expense, fontSize: 12, lineHeight: 1.4 }}>
+                Permesso negato: abilita le notifiche per Money Tracker dalle impostazioni del telefono.
+              </div>
+            ) : (
+              <button onClick={askPermission} style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: theme.primary, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                Concedi il permesso di notifica
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={sectionTitle}>CATEGORIE</div>
+      <div style={{ fontSize: 12, color: theme.subtext, marginBottom: 12, lineHeight: 1.5 }}>
+        Cambia nome e colore, aggiungine di nuove o eliminale. Le transazioni già registrate restano nello storico con nome e colore che avevano.
+      </div>
+      <CategoryEditor theme={theme} cats={categories} onChange={onCategoriesChange} onRemove={onRemoveCategory} includeIncome />
+    </div>
+  )
+}
+
+/* ============================================================
    LOCK SCREEN (PIN)
    ============================================================ */
 
@@ -1153,6 +1400,7 @@ function BottomNav({ theme, tab, setTab }) {
     { key: 'dashboard', label: 'Home', icon: LayoutDashboard },
     { key: 'transactions', label: 'Movimenti', icon: Receipt },
     { key: 'debts', label: 'Crediti', icon: Users },
+    { key: 'profile', label: 'Profilo', icon: User },
     { key: 'settings', label: 'Impostazioni', icon: SettingsIcon },
   ]
   return (
@@ -1196,6 +1444,8 @@ export default function App() {
   const [onboarding, setOnboarding] = useLocalStorageState('mt_onboarding', { onboarded: false })
 
   const theme = useTheme(settings.theme)
+  const remindersEnabled = settings.remindersEnabled !== false
+  const reminderTime = settings.reminderTime || '09:00'
 
   useEffect(() => { if (!settings.lockEnabled) setUnlocked(true) }, [settings.lockEnabled])
 
@@ -1204,12 +1454,13 @@ export default function App() {
 
   const addContact = (c) => setContacts(prev => [...prev, c])
   const deleteContact = (id) => {
+    debtEntries.filter(e => e.contactId === id).forEach(e => cancelDebtReminder(e.id))
     setContacts(prev => prev.filter(c => c.id !== id))
     setDebtEntries(prev => prev.filter(e => e.contactId !== id))
   }
   const addDebtEntry = (contactId, entry) => {
     setDebtEntries(prev => [...prev, { ...entry, contactId }])
-    if (entry.reminderDate && entry.type === 'loanGiven') {
+    if (remindersEnabled && entry.reminderDate && entry.type === 'loanGiven') {
       const contact = contacts.find(c => c.id === contactId)
       scheduleDebtReminder(entry, contact?.name || 'Contatto')
     }
@@ -1218,6 +1469,37 @@ export default function App() {
     setDebtEntries(prev => prev.filter(e => e.id !== id))
     cancelDebtReminder(id)
   }
+
+  const saveProfile = (p) => {
+    setProfile(p)
+    setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth || 0 } : a))
+  }
+
+  // Elimina la categoria; le transazioni che la usano conservano nome/colore/icona (snapshot)
+  const removeCategory = (id) => {
+    const cat = categories.find(c => c.id === id)
+    if (!cat) return
+    setTransactions(prev => prev.map(t =>
+      t.categoryId === id && !t.categoryName
+        ? { ...t, categoryName: cat.name, categoryColor: cat.color, categoryIcon: cat.icon }
+        : t
+    ))
+    setCategories(prev => prev.filter(c => c.id !== id))
+  }
+
+  const toggleReminders = (on) => {
+    setSettings(s => ({ ...s, remindersEnabled: on }))
+    if (on) {
+      const now = Date.now()
+      debtEntries
+        .filter(e => e.type === 'loanGiven' && e.reminderDate && new Date(e.reminderDate).getTime() > now)
+        .forEach(e => scheduleDebtReminder(e, contacts.find(c => c.id === e.contactId)?.name || 'Contatto'))
+    } else {
+      debtEntries.filter(e => e.reminderDate).forEach(e => cancelDebtReminder(e.id))
+    }
+  }
+
+  const changeReminderTime = (t) => setSettings(s => ({ ...s, reminderTime: t }))
 
   const finishOnboarding = ({ profile: p, categories: cats, contacts: newContacts }) => {
     setProfile(p)
@@ -1230,6 +1512,9 @@ export default function App() {
       addTransaction({
         id: uuid(), amount: p.salary, isExpense: false, categoryId: 'salary', accountId: 'bank',
         date: new Date().toISOString(), notes: 'Stipendio (impostato in onboarding)',
+        categoryName: cats.find(c => c.id === 'salary')?.name,
+        categoryColor: cats.find(c => c.id === 'salary')?.color,
+        categoryIcon: cats.find(c => c.id === 'salary')?.icon,
       })
     }
     setOnboarding({ onboarded: true })
@@ -1237,7 +1522,7 @@ export default function App() {
   }
 
   const exportBackup = () => {
-    const data = { version: 1, exportedAt: new Date().toISOString(), categories, accounts, transactions, contacts, debtEntries }
+    const data = { version: 2, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1250,9 +1535,9 @@ export default function App() {
   const exportCsv = () => {
     const rows = [['data', 'tipo', 'importo', 'categoria', 'conto', 'note']]
     transactions.forEach(t => {
-      const cat = categories.find(c => c.id === t.categoryId)
+      const cat = catView(t, categories)
       const acc = accounts.find(a => a.id === t.accountId)
-      rows.push([t.date, t.isExpense ? 'Uscita' : 'Entrata', t.amount, cat?.name || '', acc?.name || '', t.notes || ''])
+      rows.push([t.date, t.isExpense ? 'Uscita' : 'Entrata', t.amount, cat.name, acc?.name || '', t.notes || ''])
     })
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -1269,6 +1554,9 @@ export default function App() {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result)
+        if (data.profile) setProfile(data.profile)
+        if (data.categories) setCategories(data.categories)
+        if (data.accounts) setAccounts(data.accounts)
         if (data.transactions) setTransactions(data.transactions)
         if (data.contacts) setContacts(data.contacts)
         if (data.debtEntries) setDebtEntries(data.debtEntries)
@@ -1314,6 +1602,16 @@ export default function App() {
           onAdd={(entry) => addDebtEntry(activeContact.id, entry)}
           onDelete={deleteDebtEntry}
           onDeleteContact={() => { deleteContact(activeContact.id); setActiveContactId(null) }}
+          reminderTime={reminderTime} remindersEnabled={remindersEnabled}
+        />
+      )}
+
+      {tab === 'profile' && (
+        <ProfileScreen
+          theme={theme} profile={profile} onSaveProfile={saveProfile}
+          categories={categories} onCategoriesChange={setCategories} onRemoveCategory={removeCategory}
+          remindersEnabled={remindersEnabled} onToggleReminders={toggleReminders}
+          reminderTime={reminderTime} onChangeReminderTime={changeReminderTime}
         />
       )}
 
