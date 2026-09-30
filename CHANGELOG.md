@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5 — 2026-09-30
+Fix: la welcome page non si ripresenta più a chi ha già l'app con dati esistenti.
+
+- Chi ha già transazioni, contatti, movimenti di credito/debito o un profilo
+  salvato viene considerato "già registrato" e non vede più la welcome page,
+  anche quando aggiorna da una versione precedente alla v1.2 (dove l'onboarding
+  non esisteva ancora e quindi manca il segnale interno che la dà per completata).
+  La welcome page compare solo su un'installazione davvero nuova, oppure su un
+  aggiornamento in cui non era mai stato completato l'accesso iniziale.
+
 ## v1.4 — 2026-09-28
 Prove sui crediti/debiti, obiettivi di risparmio, impronta digitale e sezione Analisi.
 
