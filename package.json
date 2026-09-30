@@ -15,7 +15,8 @@
     "lucide-react": "^0.446.0",
     "@capacitor/core": "^6.1.2",
     "@capacitor/android": "^6.1.2",
-    "@capacitor/local-notifications": "^6.0.0"
+    "@capacitor/local-notifications": "^6.0.0",
+    "@aparajita/capacitor-biometric-auth": "^8.0.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
