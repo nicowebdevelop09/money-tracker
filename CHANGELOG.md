@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.4 — 2026-09-28
+Prove sui crediti/debiti, obiettivi di risparmio, impronta digitale e sezione Analisi.
+
+- **Prove sui crediti/debiti**: su ogni movimento (prestito, debito, restituzione) si
+  possono allegare file di qualsiasi tipo come prova (foto, PDF, ricevute...), sia al
+  momento della creazione sia in un secondo momento dal pulsante "Aggiungi prova"
+  sotto ogni movimento. Anteprima per le immagini, icona generica per gli altri file;
+  tap per aprire/scaricare, limite di 4 MB per file. Salvati direttamente nel
+  movimento (nessun upload esterno, restano solo sul dispositivo).
+- **Obiettivi di risparmio**: nuova sezione nella Dashboard. Si crea un obiettivo con
+  nome, importo target e data facoltativa; il progresso parte dal saldo al momento
+  della creazione e si aggiorna da solo mano a mano che il saldo cresce, con barra di
+  avanzamento e giorni rimanenti.
+- **Impronta digitale / Face ID**: nelle Impostazioni, con il blocco app già attivo,
+  si può abilitare lo sblocco biometrico (richiede una verifica riuscita per
+  attivarlo). Alla riapertura dell'app parte automaticamente la richiesta di
+  impronta/Face ID, con il PIN sempre disponibile come alternativa. Funziona solo
+  nell'APK nativo (plugin `@aparajita/capacitor-biometric-auth`); nell'anteprima web
+  compare una nota che lo segnala.
+- **Sezione Analisi**: nuova scheda nella barra in basso con vista Giorno, Settimana,
+  Mese o Anno, navigazione avanti/indietro nel periodo, totali entrate/uscite/saldo,
+  grafico dell'andamento (per ora nel giorno, per giorno nella settimana/mese, per
+  mese nell'anno), grafico a torta delle spese per categoria e l'elenco dei movimenti
+  del periodo selezionato.
+- Il backup JSON (ora versione 3) include anche gli obiettivi di risparmio.
+
 ## v1.3 — 2026-09-28
 Sezione Profilo, selettore colore interno e notifiche di riscossione configurabili.
 
