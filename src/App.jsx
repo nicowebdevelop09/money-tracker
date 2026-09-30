@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
+import { BiometricAuth } from '@aparajita/capacitor-biometric-auth'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, ResponsiveContainer, Tooltip,
 } from 'recharts'
@@ -9,7 +10,7 @@ import {
   ArrowUpRight, ArrowDownRight, Utensils, Car, Home, HeartPulse, Film,
   ShoppingBag, FileText, MoreHorizontal, Briefcase, Gift, DollarSign,
   UserPlus, Trash2, Calendar, Bell, Lock, Upload, Download, Sun, Moon,
-  Monitor, Check, ChevronLeft, Wallet, User,
+  Monitor, Check, ChevronLeft, Wallet, User, Paperclip, Target, BarChart3, Fingerprint,
 } from 'lucide-react'
 
 /* ============================================================
@@ -117,6 +118,101 @@ function catView(t, categories) {
   }
 }
 
+// --- Allegati (prove) sui movimenti di credito/debito ---
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+function openAttachment(a) {
+  const link = document.createElement('a')
+  link.href = a.dataUrl
+  link.download = a.name
+  link.target = '_blank'
+  link.rel = 'noreferrer'
+  link.click()
+}
+
+// --- Periodi per la sezione Analisi (giorno / settimana / mese / anno) ---
+const PERIODS = [
+  { key: 'day', label: 'Giorno' },
+  { key: 'week', label: 'Settimana' },
+  { key: 'month', label: 'Mese' },
+  { key: 'year', label: 'Anno' },
+]
+
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+const startOfWeek = (d) => { const x = startOfDay(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x }
+const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1)
+const startOfYear = (d) => new Date(d.getFullYear(), 0, 1)
+
+function periodRange(date, period) {
+  if (period === 'day') { const s2 = startOfDay(date); const e = new Date(s2); e.setDate(e.getDate() + 1); return { start: s2, end: e } }
+  if (period === 'week') { const s2 = startOfWeek(date); const e = new Date(s2); e.setDate(e.getDate() + 7); return { start: s2, end: e } }
+  if (period === 'month') { const s2 = startOfMonth(date); const e = new Date(s2.getFullYear(), s2.getMonth() + 1, 1); return { start: s2, end: e } }
+  const s2 = startOfYear(date); const e = new Date(s2.getFullYear() + 1, 0, 1); return { start: s2, end: e }
+}
+
+function shiftPeriod(date, period, dir) {
+  const d = new Date(date)
+  if (period === 'day') d.setDate(d.getDate() + dir)
+  else if (period === 'week') d.setDate(d.getDate() + dir * 7)
+  else if (period === 'month') d.setMonth(d.getMonth() + dir)
+  else d.setFullYear(d.getFullYear() + dir)
+  return d
+}
+
+function periodLabel(date, period) {
+  if (period === 'day') return date.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  if (period === 'week') {
+    const { start, end } = periodRange(date, 'week')
+    const endIncl = new Date(end); endIncl.setDate(endIncl.getDate() - 1)
+    return `${start.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${endIncl.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  }
+  if (period === 'month') return date.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })
+  return String(date.getFullYear())
+}
+
+// Suddivide le transazioni del periodo in sotto-intervalli, per il grafico a barre
+function subBuckets(transactions, date, period) {
+  const { start, end } = periodRange(date, period)
+  const inRange = transactions.filter(t => { const d = new Date(t.date); return d >= start && d < end })
+
+  if (period === 'day') {
+    const buckets = Array.from({ length: 24 }, (_, h) => ({ label: `${h}`, value: 0 }))
+    inRange.forEach(t => { buckets[new Date(t.date).getHours()].value += t.isExpense ? -t.amount : t.amount })
+    return buckets
+  }
+  if (period === 'week') {
+    const labels = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
+    const buckets = labels.map(l => ({ label: l, value: 0 }))
+    inRange.forEach(t => { const idx = (new Date(t.date).getDay() + 6) % 7; buckets[idx].value += t.isExpense ? -t.amount : t.amount })
+    return buckets
+  }
+  if (period === 'month') {
+    const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
+    const buckets = Array.from({ length: daysInMonth }, (_, i) => ({ label: `${i + 1}`, value: 0 }))
+    inRange.forEach(t => { buckets[new Date(t.date).getDate() - 1].value += t.isExpense ? -t.amount : t.amount })
+    return buckets
+  }
+  const labels = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
+  const buckets = labels.map(l => ({ label: l, value: 0 }))
+  inRange.forEach(t => { buckets[new Date(t.date).getMonth()].value += t.isExpense ? -t.amount : t.amount })
+  return buckets
+}
+
 function loadJSON(key, fallback) {
   try {
     const raw = localStorage.getItem(key)
@@ -179,6 +275,26 @@ async function requestNotificationPermission() {
 // Timer del fallback web (per poterli annullare) e limite massimo di setTimeout
 const webTimers = new Map()
 const MAX_TIMEOUT = 2147483647
+
+// --- Sblocco con impronta digitale / Face ID (solo su app nativa Android/iOS) ---
+async function biometricCheck() {
+  if (!isNative) return { isAvailable: false }
+  try {
+    return await BiometricAuth.checkBiometry()
+  } catch {
+    return { isAvailable: false }
+  }
+}
+
+async function biometricAuthenticate() {
+  if (!isNative) return false
+  try {
+    await BiometricAuth.authenticate({ reason: 'Sblocca Money Tracker', cancelTitle: 'Usa il PIN' })
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Pianifica un promemoria per riscuotere un credito (solo per movimenti di tipo "loanGiven")
 function scheduleDebtReminder(entry, contactName) {
@@ -472,13 +588,87 @@ function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false
   )
 }
 
+// Selettore/gestore di allegati (prove) su un movimento di credito/debito: foto,
+// PDF o qualsiasi file. Anteprima per le immagini, icona generica per gli altri file.
+function AttachmentPicker({ theme, attachments, onChange, compact = false }) {
+  const inputRef = React.useRef(null)
+  const [busy, setBusy] = useState(false)
+
+  const handleFiles = async (files) => {
+    setBusy(true)
+    const next = [...attachments]
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        alert(`"${file.name}" supera i 4 MB e non è stato aggiunto`)
+        continue
+      }
+      try {
+        const dataUrl = await readFileAsDataURL(file)
+        next.push({ id: uuid(), name: file.name, type: file.type, size: file.size, dataUrl })
+      } catch { /* file illeggibile, ignorato */ }
+    }
+    onChange(next)
+    setBusy(false)
+  }
+
+  const thumbSize = compact ? 52 : 64
+
+  return (
+    <div>
+      {attachments.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          {attachments.map(a => (
+            <div key={a.id} style={{ position: 'relative', width: thumbSize }}>
+              <div onClick={() => openAttachment(a)} style={{ cursor: 'pointer' }}>
+                {a.type?.startsWith('image/') ? (
+                  <img src={a.dataUrl} alt={a.name} style={{ width: thumbSize, height: thumbSize, objectFit: 'cover', borderRadius: 10, border: `1px solid ${theme.border}`, display: 'block' }} />
+                ) : (
+                  <div style={{ width: thumbSize, height: thumbSize, borderRadius: 10, background: theme.bg, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <FileText size={20} color={theme.subtext} />
+                  </div>
+                )}
+                <div style={{ fontSize: 9, color: theme.subtext, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onChange(attachments.filter(x => x.id !== a.id)) }}
+                style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: theme.expense, border: `2px solid ${theme.card}`, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button" onClick={() => inputRef.current?.click()} disabled={busy}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 12, border: `1px dashed ${theme.border}`, background: 'transparent', color: theme.subtext, fontSize: 12, cursor: 'pointer' }}
+      >
+        <Paperclip size={14} /> {busy ? 'Caricamento...' : 'Aggiungi prova (foto, PDF, ecc.)'}
+      </button>
+      <input
+        ref={inputRef} type="file" multiple style={{ display: 'none' }}
+        onChange={(e) => { if (e.target.files.length) handleFiles([...e.target.files]); e.target.value = '' }}
+      />
+    </div>
+  )
+}
+
+function AttachmentsModal({ theme, entry, onClose, onChange }) {
+  return (
+    <Modal theme={theme} title="Prove allegate" onClose={onClose}>
+      <AttachmentPicker theme={theme} attachments={entry.attachments || []} onChange={onChange} />
+    </Modal>
+  )
+}
+
 /* ============================================================
    GRAFICI
    ============================================================ */
 
-function ExpensePie({ theme, data }) {
+function ExpensePie({ theme, data, emptyLabel = 'Nessuna spesa questo mese' }) {
   if (!data.length) {
-    return <div style={{ padding: '30px 0', textAlign: 'center', color: theme.subtext, fontSize: 13 }}>Nessuna spesa questo mese</div>
+    return <div style={{ padding: '30px 0', textAlign: 'center', color: theme.subtext, fontSize: 13 }}>{emptyLabel}</div>
   }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -524,7 +714,69 @@ function CashFlowChart({ theme, data }) {
    SCHERMATA: DASHBOARD
    ============================================================ */
 
-function DashboardScreen({ theme, transactions, accounts, categories, contacts, debtEntries, profile }) {
+// --- Obiettivi di risparmio ---
+function GoalCard({ theme, goal, currentBalance, onDelete }) {
+  const span = goal.targetAmount - goal.startAmount
+  const saved = Math.max(0, currentBalance - goal.startAmount)
+  const progress = Math.max(0, Math.min(100, span <= 0 ? 100 : (saved / span) * 100))
+  const reached = progress >= 100
+  const daysLeft = goal.targetDate ? Math.ceil((new Date(goal.targetDate) - new Date()) / 86400000) : null
+
+  return (
+    <div style={{ background: theme.card, borderRadius: 16, padding: 14, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: `${theme.primary}26`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Target size={16} color={theme.primary} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{goal.name}</div>
+          <div style={{ fontSize: 11, color: theme.subtext }}>
+            {fmtCurrency(saved)} di {fmtCurrency(span > 0 ? span : goal.targetAmount)}
+            {daysLeft !== null && (daysLeft >= 0 ? ` · ${daysLeft}g rimanenti` : ' · scaduto')}
+          </div>
+        </div>
+        <button onClick={onDelete} style={iconBtnStyle(theme)}><Trash2 size={14} color={theme.expense} /></button>
+      </div>
+      <div style={{ height: 8, borderRadius: 4, background: theme.border, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${progress}%`, background: reached ? theme.income : theme.primary, borderRadius: 4, transition: 'width .3s' }} />
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 11, color: theme.subtext, marginTop: 4 }}>{progress.toFixed(0)}%{reached ? ' 🎉' : ''}</div>
+    </div>
+  )
+}
+
+function AddGoalModal({ theme, currentBalance, onClose, onSave }) {
+  const [name, setName] = useState('')
+  const [targetAmount, setTargetAmount] = useState('')
+  const [targetDate, setTargetDate] = useState('')
+
+  const save = () => {
+    const amt = parseFloat(targetAmount.replace(',', '.'))
+    if (!name.trim() || !amt || amt <= 0) { alert('Inserisci un nome e un importo obiettivo valido'); return }
+    onSave({
+      id: uuid(), name: name.trim(), targetAmount: amt,
+      targetDate: targetDate ? new Date(targetDate).toISOString() : null,
+      startAmount: currentBalance, createdAt: new Date().toISOString(),
+    })
+    onClose()
+  }
+
+  return (
+    <Modal theme={theme} title="Nuovo obiettivo di risparmio" onClose={onClose}>
+      <input style={{ ...inputStyle(theme), marginBottom: 14 }} placeholder="es. Vacanza, Fondo emergenza..." value={name} onChange={(e) => setName(e.target.value)} />
+      <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Importo obiettivo €</div>
+      <input inputMode="decimal" style={{ ...inputStyle(theme), marginBottom: 14 }} placeholder="es. 2000" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} />
+      <div style={{ fontSize: 12, fontWeight: 600, color: theme.subtext, marginBottom: 6 }}>Data obiettivo (opzionale)</div>
+      <input type="date" style={{ ...inputStyle(theme), marginBottom: 16 }} value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+      <div style={{ fontSize: 11, color: theme.subtext, marginBottom: 20, lineHeight: 1.4 }}>Il progresso parte dal saldo attuale ({fmtCurrency(currentBalance)}).</div>
+      <button onClick={save} style={{ width: '100%', padding: 15, borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+        Crea obiettivo
+      </button>
+    </Modal>
+  )
+}
+
+function DashboardScreen({ theme, transactions, accounts, categories, contacts, debtEntries, profile, goals, onAddGoal, onDeleteGoal }) {
   const now = new Date()
 
   const totalBalance = useMemo(() => {
@@ -563,6 +815,8 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
     return Object.values(map)
   }, [transactions, categories])
 
+  const [showAddGoal, setShowAddGoal] = useState(false)
+
   const barData = useMemo(() => {
     const arr = []
     for (let i = 5; i >= 0; i--) {
@@ -597,6 +851,21 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
       </div>
 
       <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: theme.text }}>Obiettivi di risparmio</div>
+          <button onClick={() => setShowAddGoal(true)} style={{ ...iconBtnStyle(theme), width: 30, height: 30 }}><Plus size={16} color={theme.text} /></button>
+        </div>
+        {goals.length === 0 && (
+          <div style={{ color: theme.subtext, fontSize: 12, background: theme.card, borderRadius: 16, padding: 14, lineHeight: 1.5 }}>
+            Nessun obiettivo ancora. Aggiungine uno per iniziare a monitorare i tuoi risparmi.
+          </div>
+        )}
+        {goals.map(g => (
+          <GoalCard key={g.id} theme={theme} goal={g} currentBalance={totalBalance} onDelete={() => onDeleteGoal(g.id)} />
+        ))}
+      </div>
+
+      <div>
         <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 8 }}>Spese per categoria</div>
         <div style={{ background: theme.card, borderRadius: 18, padding: 14 }}>
           <ExpensePie theme={theme} data={pieData} />
@@ -610,6 +879,7 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
         </div>
       </div>
       <div style={{ height: 70 }} />
+      {showAddGoal && <AddGoalModal theme={theme} currentBalance={totalBalance} onClose={() => setShowAddGoal(false)} onSave={onAddGoal} />}
     </div>
   )
 }
@@ -617,6 +887,98 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
 /* ============================================================
    SCHERMATA: TRANSAZIONI
    ============================================================ */
+
+/* ============================================================
+   SCHERMATA: ANALISI (giorno / settimana / mese / anno)
+   ============================================================ */
+
+function AnalysisScreen({ theme, transactions, categories }) {
+  const [period, setPeriod] = useState('month')
+  const [anchor, setAnchor] = useState(new Date())
+
+  const { start, end } = useMemo(() => periodRange(anchor, period), [anchor, period])
+
+  const inRange = useMemo(
+    () => transactions.filter(t => { const d = new Date(t.date); return d >= start && d < end }),
+    [transactions, start, end]
+  )
+
+  const income = useMemo(() => inRange.filter(t => !t.isExpense).reduce((s, t) => s + t.amount, 0), [inRange])
+  const expense = useMemo(() => inRange.filter(t => t.isExpense).reduce((s, t) => s + t.amount, 0), [inRange])
+
+  const pieData = useMemo(() => {
+    const map = {}
+    inRange.filter(t => t.isExpense).forEach(t => {
+      const v = catView(t, categories)
+      if (!map[t.categoryId]) map[t.categoryId] = { name: v.name, color: v.color, value: 0 }
+      map[t.categoryId].value += t.amount
+    })
+    return Object.values(map)
+  }, [inRange, categories])
+
+  const barData = useMemo(() => subBuckets(transactions, anchor, period), [transactions, anchor, period])
+
+  return (
+    <div style={{ padding: 16, paddingBottom: 90 }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: theme.text, marginBottom: 16 }}>Analisi</div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, overflowX: 'auto' }}>
+        {PERIODS.map(p => (
+          <ChipButton key={p.key} active={period === p.key} color={theme.primary} theme={theme} onClick={() => { setPeriod(p.key); setAnchor(new Date()) }}>
+            {p.label}
+          </ChipButton>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 8 }}>
+        <button onClick={() => setAnchor(shiftPeriod(anchor, period, -1))} style={iconBtnStyle(theme)}><ChevronLeft size={18} color={theme.text} /></button>
+        <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, textTransform: 'capitalize', textAlign: 'center', flex: 1 }}>
+          {periodLabel(anchor, period)}
+        </div>
+        <button onClick={() => setAnchor(shiftPeriod(anchor, period, 1))} style={{ ...iconBtnStyle(theme), transform: 'rotate(180deg)' }}><ChevronLeft size={18} color={theme.text} /></button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+        <SummaryCard theme={theme} label="Entrate" value={fmtCurrency(income)} icon={ArrowDownRight} color={theme.income} />
+        <SummaryCard theme={theme} label="Uscite" value={fmtCurrency(expense)} icon={ArrowUpRight} color={theme.expense} />
+      </div>
+      <div style={{ background: theme.card, borderRadius: 18, padding: 16, marginBottom: 20, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: theme.subtext }}>Saldo del periodo</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: income - expense >= 0 ? theme.income : theme.expense }}>
+          {fmtCurrency(income - expense)}
+        </div>
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 8 }}>Andamento</div>
+      <div style={{ background: theme.card, borderRadius: 18, padding: 14, marginBottom: 20 }}>
+        <CashFlowChart theme={theme} data={barData} />
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 8 }}>Spese per categoria</div>
+      <div style={{ background: theme.card, borderRadius: 18, padding: 14, marginBottom: 20 }}>
+        <ExpensePie theme={theme} data={pieData} emptyLabel="Nessuna spesa in questo periodo" />
+      </div>
+
+      <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, marginBottom: 8 }}>Movimenti ({inRange.length})</div>
+      {inRange.length === 0 && <div style={{ color: theme.subtext, fontSize: 13 }}>Nessun movimento in questo periodo.</div>}
+      {[...inRange].sort((a, b) => new Date(b.date) - new Date(a.date)).map(t => {
+        const cat = catView(t, categories)
+        return (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, background: theme.card, borderRadius: 14, padding: 10, marginBottom: 8 }}>
+            <IconBubble name={cat.icon} color={cat.color} size={16} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>{cat.name}</div>
+              <div style={{ fontSize: 11, color: theme.subtext }}>{new Date(t.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', hour: period === 'day' ? '2-digit' : undefined, minute: period === 'day' ? '2-digit' : undefined })}</div>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 13, color: t.isExpense ? theme.expense : theme.income }}>
+              {t.isExpense ? '-' : '+'}{fmtCurrency(t.amount)}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 function TransactionsScreen({ theme, transactions, categories, accounts, onDelete }) {
   const grouped = useMemo(() => {
@@ -780,9 +1142,10 @@ function DebtsScreen({ theme, contacts, debtEntries, onOpenContact }) {
   )
 }
 
-function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete, onDeleteContact, reminderTime, remindersEnabled }) {
+function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete, onDeleteContact, onUpdateAttachments, reminderTime, remindersEnabled }) {
   const balance = entries.reduce((s, e) => s + e.amount * DEBT_TYPES[e.type].sign, 0)
   const [showAdd, setShowAdd] = useState(false)
+  const [attachEntry, setAttachEntry] = useState(null)
 
   return (
     <div style={{ padding: 16, paddingBottom: 90 }}>
@@ -818,25 +1181,38 @@ function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete,
 
       {[...entries].sort((a, b) => new Date(b.date) - new Date(a.date)).map(e => {
         const positive = DEBT_TYPES[e.type].sign > 0
+        const attachments = e.attachments || []
         return (
-          <div key={e.id} onClick={() => { if (confirm('Eliminare questo movimento?')) onDelete(e.id) }} style={{
-            display: 'flex', alignItems: 'center', gap: 12, background: theme.card,
-            borderRadius: 16, padding: 12, marginBottom: 8, cursor: 'pointer',
-          }}>
-            <IconBubble name={positive ? 'income' : 'other'} color={positive ? theme.income : theme.expense} size={16} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>{DEBT_TYPES[e.type].label}</div>
-              <div style={{ fontSize: 12, color: theme.subtext }}>{fmtDate(e.date)}{e.notes ? ` · ${e.notes}` : ''}{e.reminderDate ? ` · 🔔 ${new Date(e.reminderDate).toLocaleDateString('it-IT')}` : ''}</div>
+          <div key={e.id} style={{ background: theme.card, borderRadius: 16, padding: 12, marginBottom: 8 }}>
+            <div onClick={() => { if (confirm('Eliminare questo movimento?')) onDelete(e.id) }} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+              <IconBubble name={positive ? 'income' : 'other'} color={positive ? theme.income : theme.expense} size={16} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>{DEBT_TYPES[e.type].label}</div>
+                <div style={{ fontSize: 12, color: theme.subtext }}>{fmtDate(e.date)}{e.notes ? ` · ${e.notes}` : ''}{e.reminderDate ? ` · 🔔 ${new Date(e.reminderDate).toLocaleDateString('it-IT')}` : ''}</div>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: positive ? theme.income : theme.expense }}>
+                {positive ? '+' : '-'}{fmtCurrency(e.amount)}
+              </div>
             </div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: positive ? theme.income : theme.expense }}>
-              {positive ? '+' : '-'}{fmtCurrency(e.amount)}
-            </div>
+            <button
+              onClick={() => setAttachEntry(e)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: theme.subtext, fontSize: 11, cursor: 'pointer', padding: '8px 0 0', marginLeft: 42 }}
+            >
+              <Paperclip size={12} /> {attachments.length > 0 ? `${attachments.length} prova/e allegata/e` : 'Aggiungi prova'}
+            </button>
           </div>
         )
       })}
 
       {showAdd && (
         <AddDebtEntryModal theme={theme} reminderTime={reminderTime} remindersEnabled={remindersEnabled} onClose={() => setShowAdd(false)} onSave={(entry) => { onAdd(entry); setShowAdd(false) }} />
+      )}
+
+      {attachEntry && (
+        <AttachmentsModal
+          theme={theme} entry={attachEntry} onClose={() => setAttachEntry(null)}
+          onChange={(atts) => { onUpdateAttachments(attachEntry.id, atts); setAttachEntry(prev => prev && { ...prev, attachments: atts }) }}
+        />
       )}
     </div>
   )
@@ -848,12 +1224,13 @@ function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', rem
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [reminderDate, setReminderDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [attachments, setAttachments] = useState([])
 
   const save = () => {
     const val = parseFloat(amount.replace(',', '.'))
     if (!val || val <= 0) { alert('Inserisci un importo valido'); return }
     onSave({
-      id: uuid(), amount: val, type, date: new Date(date).toISOString(), notes,
+      id: uuid(), amount: val, type, date: new Date(date).toISOString(), notes, attachments,
       reminderDate: reminderDate ? new Date(`${reminderDate}T${reminderTime}:00`).toISOString() : null,
     })
   }
@@ -888,7 +1265,12 @@ function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', rem
         </>
       )}
 
-      <input style={{ ...inputStyle(theme), marginBottom: 22 }} placeholder="Note (opzionale)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <input style={{ ...inputStyle(theme), marginBottom: 18 }} placeholder="Note (opzionale)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+
+      <div style={{ fontSize: 13, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Prove (opzionale)</div>
+      <div style={{ marginBottom: 22 }}>
+        <AttachmentPicker theme={theme} attachments={attachments} onChange={setAttachments} />
+      </div>
 
       <button onClick={save} style={{
         width: '100%', padding: 15, borderRadius: 14, border: 'none',
@@ -926,6 +1308,21 @@ function AddContactModal({ theme, onClose, onSave }) {
 
 function SettingsScreen({ theme, settings, setSettings, exportBackup, importBackup, exportCsv }) {
   const fileInputRef = React.useRef(null)
+  const [bioAvailable, setBioAvailable] = useState(false)
+
+  useEffect(() => { biometricCheck().then(r => setBioAvailable(!!r.isAvailable)) }, [])
+
+  const toggleBiometric = async (on) => {
+    if (on) {
+      const r = await biometricCheck()
+      if (!r.isAvailable) { alert('Nessun sensore di impronta/Face ID disponibile o configurato su questo dispositivo.'); return }
+      const ok = await biometricAuthenticate()
+      if (!ok) { alert('Autenticazione non riuscita, riprova.'); return }
+      setSettings(s => ({ ...s, biometricEnabled: true }))
+    } else {
+      setSettings(s => ({ ...s, biometricEnabled: false }))
+    }
+  }
 
   return (
     <div style={{ padding: 16, paddingBottom: 90 }}>
@@ -964,6 +1361,27 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
             }
           }} style={{ width: 20, height: 20 }} />
         </div>
+
+        {settings.lockEnabled && isNative && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${theme.border}` }}>
+            <Fingerprint size={18} color={theme.subtext} />
+            <div style={{ flex: 1 }}>
+              <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Impronta digitale / Face ID</div>
+              <div style={{ color: theme.subtext, fontSize: 12 }}>
+                {bioAvailable ? 'Sblocca l\'app senza inserire il PIN' : 'Non disponibile su questo dispositivo'}
+              </div>
+            </div>
+            <input
+              type="checkbox" checked={!!settings.biometricEnabled} disabled={!bioAvailable}
+              onChange={(e) => toggleBiometric(e.target.checked)} style={{ width: 20, height: 20 }}
+            />
+          </div>
+        )}
+        {settings.lockEnabled && !isNative && (
+          <div style={{ fontSize: 11, color: theme.subtext, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${theme.border}`, lineHeight: 1.4 }}>
+            L'impronta digitale/Face ID è disponibile solo nell'app Android/iOS, non in questa anteprima web.
+          </div>
+        )}
       </div>
 
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>BACKUP DATI</div>
@@ -1362,20 +1780,32 @@ function ProfileScreen({
    LOCK SCREEN (PIN)
    ============================================================ */
 
-function LockScreen({ theme, pin, onUnlock }) {
+function LockScreen({ theme, pin, biometricEnabled, onUnlock }) {
   const [input, setInput] = useState('')
   const [error, setError] = useState(false)
+  const [tryingBio, setTryingBio] = useState(biometricEnabled)
 
   const check = () => {
     if (input === pin) onUnlock()
     else { setError(true); setInput('') }
   }
 
+  const tryBiometric = useCallback(async () => {
+    setTryingBio(true)
+    const ok = await biometricAuthenticate()
+    setTryingBio(false)
+    if (ok) onUnlock()
+  }, [onUnlock])
+
+  useEffect(() => { if (biometricEnabled) tryBiometric() }, []) // tentativo automatico all'apertura
+
   return (
     <div style={{ height: '100%', background: theme.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
       <Lock size={56} color={theme.primary} />
       <div style={{ fontSize: 19, fontWeight: 700, color: theme.text, marginTop: 16 }}>App bloccata</div>
-      <div style={{ fontSize: 13, color: theme.subtext, marginTop: 4, marginBottom: 24 }}>Inserisci il PIN per continuare</div>
+      <div style={{ fontSize: 13, color: theme.subtext, marginTop: 4, marginBottom: 24 }}>
+        {tryingBio ? 'Verifica impronta/Face ID in corso...' : 'Inserisci il PIN per continuare'}
+      </div>
       <input
         type="password" inputMode="numeric" maxLength={6} value={input}
         onChange={(e) => { setInput(e.target.value); setError(false) }}
@@ -1387,6 +1817,11 @@ function LockScreen({ theme, pin, onUnlock }) {
       <button onClick={check} style={{ marginTop: 16, padding: '12px 40px', borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
         Sblocca
       </button>
+      {biometricEnabled && (
+        <button onClick={tryBiometric} style={{ marginTop: 14, background: 'none', border: 'none', color: theme.primary, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <Fingerprint size={16} /> Usa impronta / Face ID
+        </button>
+      )}
     </div>
   )
 }
@@ -1399,6 +1834,7 @@ function BottomNav({ theme, tab, setTab }) {
   const items = [
     { key: 'dashboard', label: 'Home', icon: LayoutDashboard },
     { key: 'transactions', label: 'Movimenti', icon: Receipt },
+    { key: 'analysis', label: 'Analisi', icon: BarChart3 },
     { key: 'debts', label: 'Crediti', icon: Users },
     { key: 'profile', label: 'Profilo', icon: User },
     { key: 'settings', label: 'Impostazioni', icon: SettingsIcon },
@@ -1411,10 +1847,10 @@ function BottomNav({ theme, tab, setTab }) {
       {items.map(it => (
         <div key={it.key} onClick={() => setTab(it.key)} style={{
           flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-          padding: '10px 0 6px', cursor: 'pointer',
+          padding: '9px 0 6px', cursor: 'pointer', minWidth: 0,
         }}>
-          <it.icon size={20} color={tab === it.key ? theme.primary : theme.subtext} />
-          <div style={{ fontSize: 10, color: tab === it.key ? theme.primary : theme.subtext, fontWeight: tab === it.key ? 700 : 400 }}>
+          <it.icon size={18} color={tab === it.key ? theme.primary : theme.subtext} />
+          <div style={{ fontSize: 9, color: tab === it.key ? theme.primary : theme.subtext, fontWeight: tab === it.key ? 700 : 400, whiteSpace: 'nowrap' }}>
             {it.label}
           </div>
         </div>
@@ -1440,6 +1876,7 @@ export default function App() {
   const [transactions, setTransactions] = useLocalStorageState('mt_transactions', [])
   const [contacts, setContacts] = useLocalStorageState('mt_contacts', [])
   const [debtEntries, setDebtEntries] = useLocalStorageState('mt_debtEntries', [])
+  const [goals, setGoals] = useLocalStorageState('mt_goals', [])
   const [profile, setProfile] = useLocalStorageState('mt_profile', { name: '', birthYear: null, netWorth: 0, salary: 0 })
   const [onboarding, setOnboarding] = useLocalStorageState('mt_onboarding', { onboarded: false })
 
@@ -1469,6 +1906,12 @@ export default function App() {
     setDebtEntries(prev => prev.filter(e => e.id !== id))
     cancelDebtReminder(id)
   }
+  const updateDebtEntryAttachments = (entryId, attachments) => {
+    setDebtEntries(prev => prev.map(e => e.id === entryId ? { ...e, attachments } : e))
+  }
+
+  const addGoal = (g) => setGoals(prev => [...prev, g])
+  const deleteGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id))
 
   const saveProfile = (p) => {
     setProfile(p)
@@ -1522,7 +1965,7 @@ export default function App() {
   }
 
   const exportBackup = () => {
-    const data = { version: 2, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries }
+    const data = { version: 3, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries, goals }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1560,6 +2003,7 @@ export default function App() {
         if (data.transactions) setTransactions(data.transactions)
         if (data.contacts) setContacts(data.contacts)
         if (data.debtEntries) setDebtEntries(data.debtEntries)
+        if (data.goals) setGoals(data.goals)
         alert('Backup importato con successo')
       } catch {
         alert('File non valido')
@@ -1573,7 +2017,7 @@ export default function App() {
   }
 
   if (settings.lockEnabled && !unlocked) {
-    return <LockScreen theme={theme} pin={settings.pin} onUnlock={() => setUnlocked(true)} />
+    return <LockScreen theme={theme} pin={settings.pin} biometricEnabled={!!settings.biometricEnabled} onUnlock={() => setUnlocked(true)} />
   }
 
   const activeContact = activeContactId ? contacts.find(c => c.id === activeContactId) : null
@@ -1583,11 +2027,15 @@ export default function App() {
       <style>{`@keyframes slideUp { from { transform: translateY(30px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }`}</style>
 
       {tab === 'dashboard' && (
-        <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} profile={profile} />
+        <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} profile={profile} goals={goals} onAddGoal={addGoal} onDeleteGoal={deleteGoal} />
       )}
 
       {tab === 'transactions' && (
         <TransactionsScreen theme={theme} transactions={transactions} categories={categories} accounts={accounts} onDelete={deleteTransaction} />
+      )}
+
+      {tab === 'analysis' && (
+        <AnalysisScreen theme={theme} transactions={transactions} categories={categories} />
       )}
 
       {tab === 'debts' && !activeContact && (
@@ -1602,6 +2050,7 @@ export default function App() {
           onAdd={(entry) => addDebtEntry(activeContact.id, entry)}
           onDelete={deleteDebtEntry}
           onDeleteContact={() => { deleteContact(activeContact.id); setActiveContactId(null) }}
+          onUpdateAttachments={updateDebtEntryAttachments}
           reminderTime={reminderTime} remindersEnabled={remindersEnabled}
         />
       )}
