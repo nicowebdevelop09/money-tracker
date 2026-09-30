@@ -2012,7 +2012,18 @@ export default function App() {
     reader.readAsText(file)
   }
 
-  if (!onboarding.onboarded) {
+  // Chi ha già dati (profilo, transazioni, contatti, movimenti) è considerato già "registrato":
+  // capita a chi aggiorna da una versione precedente alla v1.2, dove l'onboarding non esisteva ancora.
+  const hasExistingData = !!(profile?.name?.trim()) || transactions.length > 0 || contacts.length > 0 || debtEntries.length > 0
+  const showOnboarding = !onboarding.onboarded && !hasExistingData
+
+  useEffect(() => {
+    if (!onboarding.onboarded && hasExistingData) {
+      setOnboarding({ onboarded: true }) // correzione una tantum del flag, così la prossima apertura è già a posto
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (showOnboarding) {
     return <Onboarding theme={theme} onFinish={finishOnboarding} />
   }
 
