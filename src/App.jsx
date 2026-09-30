@@ -43,7 +43,6 @@ const DEFAULT_ACCOUNTS = [
   { id: 'card', name: 'Carta', initialBalance: 0 },
 ]
 
-// Colore di partenza del selettore per ogni nuovo elemento (categoria, ecc.)
 const PURE_RED = '#FF0000'
 
 const DEBT_TYPES = {
@@ -67,11 +66,10 @@ const fmtDate = (iso) =>
 
 const monthKey = (d) => `${d.getFullYear()}-${d.getMonth()}`
 
-// --- Colori: selettore Tonalità (0-360) + Saturazione (0-100), Valore fisso al 100% ---
 function hsvToHex(h, s) {
   const S = Math.max(0, Math.min(100, s)) / 100
   const H = (((h % 360) + 360) % 360) / 60
-  const c = S // v * s con v = 1
+  const c = S
   const x = c * (1 - Math.abs((H % 2) - 1))
   const m = 1 - c
   let r = 0, g = 0, b = 0
@@ -107,8 +105,6 @@ function hexToHueSat(hex) {
   return { h: Math.round(h), s: Math.round(sat) }
 }
 
-// Nome/colore/icona di una transazione: categoria attuale se esiste, altrimenti
-// i valori salvati al momento della creazione (lo storico non si rovina se la categoria viene eliminata)
 function catView(t, categories) {
   const cat = categories.find(c => c.id === t.categoryId)
   return {
@@ -118,7 +114,6 @@ function catView(t, categories) {
   }
 }
 
-// --- Allegati (prove) sui movimenti di credito/debito ---
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
 
 function fmtBytes(n) {
@@ -145,7 +140,6 @@ function openAttachment(a) {
   link.click()
 }
 
-// --- Periodi per la sezione Analisi (giorno / settimana / mese / anno) ---
 const PERIODS = [
   { key: 'day', label: 'Giorno' },
   { key: 'week', label: 'Settimana' },
@@ -185,7 +179,6 @@ function periodLabel(date, period) {
   return String(date.getFullYear())
 }
 
-// Suddivide le transazioni del periodo in sotto-intervalli, per il grafico a barre
 function subBuckets(transactions, date, period) {
   const { start, end } = periodRange(date, period)
   const inRange = transactions.filter(t => { const d = new Date(t.date); return d >= start && d < end })
@@ -231,12 +224,11 @@ function useLocalStorageState(key, initial) {
 }
 
 /* ============================================================
-   NOTIFICHE LOCALI (promemoria riscossione crediti)
+   NOTIFICHE LOCALI & BIOMETRIA
    ============================================================ */
 
 const isNative = Capacitor.isNativePlatform()
 
-// Le notifiche locali richiedono un id numerico: lo deriviamo dall'id (stringa) del movimento
 const reminderNumId = (id) => {
   let h = 0
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
@@ -272,11 +264,9 @@ async function requestNotificationPermission() {
   }
 }
 
-// Timer del fallback web (per poterli annullare) e limite massimo di setTimeout
 const webTimers = new Map()
 const MAX_TIMEOUT = 2147483647
 
-// --- Sblocco con impronta digitale / Face ID (solo su app nativa Android/iOS) ---
 async function biometricCheck() {
   if (!isNative) return { isAvailable: false }
   try {
@@ -296,7 +286,6 @@ async function biometricAuthenticate() {
   }
 }
 
-// Pianifica un promemoria per riscuotere un credito (solo per movimenti di tipo "loanGiven")
 function scheduleDebtReminder(entry, contactName) {
   if (!entry.reminderDate) return
   const target = new Date(entry.reminderDate)
@@ -315,7 +304,6 @@ function scheduleDebtReminder(entry, contactName) {
     return
   }
 
-  // Fallback web: funziona solo mentre la pagina resta aperta (limite della Notification API)
   if (typeof Notification === 'undefined') return
   const ms = target.getTime() - Date.now()
   if (ms > MAX_TIMEOUT) return
@@ -337,7 +325,7 @@ function cancelDebtReminder(entryId) {
 }
 
 /* ============================================================
-   TEMA (chiaro / scuro / automatico)
+   TEMA
    ============================================================ */
 
 function useTheme(mode) {
@@ -460,9 +448,6 @@ const HS_SLIDER_CSS = `
 .dt-hs-slider::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:#fff;border:3px solid #111;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer}
 `
 
-// Selettore colore interno all'app (non usa <input type="color"> nativo):
-// cerchio col colore attuale -> pannello con Tonalità e Saturazione, Valore fisso al 100%.
-// Il colore cambia solo dopo "Conferma"; si salva come esadecimale (es. #FF0000).
 function SwatchPicker({ theme, value, onChange, size = 26 }) {
   const [open, setOpen] = useState(false)
   const [hs, setHs] = useState({ h: 0, s: 100 })
@@ -525,8 +510,6 @@ function SwatchPicker({ theme, value, onChange, size = 26 }) {
   )
 }
 
-// Elenco categorie modificabile (nome + colore + elimina) con form "nuova categoria".
-// Usato sia nell'onboarding (solo spese) sia nel Profilo (spese + entrate).
 function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false }) {
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState(PURE_RED)
@@ -541,7 +524,7 @@ function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false
       color: newColor, isExpense: newIsExpense,
     }])
     setNewName('')
-    setNewColor(PURE_RED) // dopo la creazione il selettore torna a rosso puro
+    setNewColor(PURE_RED)
   }
 
   const groups = includeIncome
@@ -588,8 +571,6 @@ function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false
   )
 }
 
-// Selettore/gestore di allegati (prove) su un movimento di credito/debito: foto,
-// PDF o qualsiasi file. Anteprima per le immagini, icona generica per gli altri file.
 function AttachmentPicker({ theme, attachments, onChange, compact = false }) {
   const inputRef = React.useRef(null)
   const [busy, setBusy] = useState(false)
@@ -714,7 +695,6 @@ function CashFlowChart({ theme, data }) {
    SCHERMATA: DASHBOARD
    ============================================================ */
 
-// --- Obiettivi di risparmio ---
 function GoalCard({ theme, goal, currentBalance, onDelete }) {
   const span = goal.targetAmount - goal.startAmount
   const saved = Math.max(0, currentBalance - goal.startAmount)
@@ -885,11 +865,7 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
 }
 
 /* ============================================================
-   SCHERMATA: TRANSAZIONI
-   ============================================================ */
-
-/* ============================================================
-   SCHERMATA: ANALISI (giorno / settimana / mese / anno)
+   SCHERMATA: TRANSAZIONI & ANALISI
    ============================================================ */
 
 function AnalysisScreen({ theme, transactions, categories }) {
@@ -1432,7 +1408,6 @@ function ProgressDots({ theme, step, total }) {
 function Onboarding({ theme, onFinish }) {
   const [step, setStep] = useState(1)
 
-  // Step 1 — profilo e privacy
   const [name, setName] = useState('')
   const [birthYear, setBirthYear] = useState('')
   const [netWorth, setNetWorth] = useState('')
@@ -1440,10 +1415,8 @@ function Onboarding({ theme, onFinish }) {
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
 
-  // Step 2 — categorie di spesa preimpostate
   const [cats, setCats] = useState(() => DEFAULT_CATEGORIES.map(c => ({ ...c })))
 
-  // Step 3 — contatti crediti/debiti
   const [onboardContacts, setOnboardContacts] = useState([])
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
@@ -1707,154 +1680,149 @@ function ProfileScreen({
           <input type="number" inputMode="numeric" style={inputStyle(theme)} value={birthYear} onChange={(e) => setBirthYear(e.target.value)} placeholder="es. 1994" />
         </div>
         <div>
-          <div style={fieldLabel}>Patrimonio di partenza €</div>
+          <div style={fieldLabel}>Patrimonio iniziale €</div>
           <input inputMode="decimal" style={inputStyle(theme)} value={netWorth} onChange={(e) => setNetWorth(e.target.value)} placeholder="es. 5000" />
-          <div style={{ fontSize: 11, color: theme.subtext, marginTop: 6, lineHeight: 1.4 }}>
-            È il saldo iniziale del Conto Corrente: le transazioni si sommano a questo valore.
-          </div>
         </div>
         <div>
           <div style={fieldLabel}>Stipendio mensile €</div>
           <input inputMode="decimal" style={inputStyle(theme)} value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="es. 1500" />
         </div>
+
         {error && <div style={{ color: theme.expense, fontSize: 12 }}>{error}</div>}
+        {saved && <div style={{ color: theme.income, fontSize: 12 }}>Profilo salvato!</div>}
+
         <button onClick={save} style={{
-          padding: 13, borderRadius: 14, border: 'none', background: saved ? theme.income : theme.primary,
-          color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+          width: '100%', padding: 13, borderRadius: 12, border: 'none',
+          background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer', marginTop: 4,
         }}>
-          {saved ? 'Salvato ✓' : 'Salva modifiche'}
+          Salva modifiche
         </button>
       </div>
 
-      <div style={sectionTitle}>NOTIFICHE RISCOSSIONE</div>
+      <div style={sectionTitle}>CATEGORIE</div>
       <div style={{ background: theme.card, borderRadius: 16, padding: 16 }}>
+        <CategoryEditor theme={theme} cats={categories} onChange={onCategoriesChange} onRemove={onRemoveCategory} includeIncome />
+      </div>
+
+      <div style={sectionTitle}>NOTIFICHE PROMEMORIA</div>
+      <div style={{ background: theme.card, borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Bell size={18} color={theme.subtext} />
           <div style={{ flex: 1 }}>
-            <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Promemoria crediti</div>
-            <div style={{ color: theme.subtext, fontSize: 12 }}>Una notifica alla data scelta su ogni prestito erogato</div>
+            <div style={{ color: theme.text, fontSize: 14, fontWeight: 600 }}>Notifiche riscossione</div>
+            <div style={{ color: theme.subtext, fontSize: 12 }}>Promemoria per i prestiti erogati</div>
           </div>
           <input type="checkbox" checked={remindersEnabled} onChange={(e) => toggle(e.target.checked)} style={{ width: 20, height: 20 }} />
         </div>
 
         {remindersEnabled && (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ color: theme.text, fontSize: 13, fontWeight: 600 }}>Orario del promemoria</div>
-                <div style={{ color: theme.subtext, fontSize: 11 }}>Vale per i nuovi promemoria</div>
-              </div>
-              <input
-                type="time" value={reminderTime} style={{ ...inputStyle(theme), width: 120 }}
-                onChange={(e) => { if (e.target.value) onChangeReminderTime(e.target.value) }}
-              />
-            </div>
-
-            {perm === 'granted' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: theme.income, fontSize: 12 }}>
-                <Check size={14} /> Permesso di notifica concesso
-              </div>
-            ) : perm === 'denied' ? (
-              <div style={{ color: theme.expense, fontSize: 12, lineHeight: 1.4 }}>
-                Permesso negato: abilita le notifiche per Money Tracker dalle impostazioni del telefono.
-              </div>
-            ) : (
-              <button onClick={askPermission} style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: theme.primary, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                Concedi il permesso di notifica
-              </button>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTop: `1px solid ${theme.border}` }}>
+            <div style={{ color: theme.text, fontSize: 13 }}>Orario di notifica predefinito</div>
+            <input type="time" style={{ ...inputStyle(theme), width: 'auto', padding: '6px 10px' }} value={reminderTime} onChange={(e) => onChangeReminderTime(e.target.value)} />
           </div>
         )}
-      </div>
 
-      <div style={sectionTitle}>CATEGORIE</div>
-      <div style={{ fontSize: 12, color: theme.subtext, marginBottom: 12, lineHeight: 1.5 }}>
-        Cambia nome e colore, aggiungine di nuove o eliminale. Le transazioni già registrate restano nello storico con nome e colore che avevano.
+        {perm === 'denied' && (
+          <div style={{ color: theme.expense, fontSize: 11, lineHeight: 1.4 }}>
+            Le notifiche sono bloccate dal sistema operativo. Per attivarle, vai nelle impostazioni del telefono → Notifiche → Money Tracker.
+          </div>
+        )}
+        {perm === 'prompt' && (
+          <button onClick={askPermission} style={{ background: 'transparent', border: `1px solid ${theme.border}`, borderRadius: 10, padding: 8, color: theme.primary, fontSize: 12, cursor: 'pointer' }}>
+            Richiedi permesso notifiche
+          </button>
+        )}
       </div>
-      <CategoryEditor theme={theme} cats={categories} onChange={onCategoriesChange} onRemove={onRemoveCategory} includeIncome />
     </div>
   )
 }
 
 /* ============================================================
-   LOCK SCREEN (PIN)
+   SCHERMATA BLOCCO PIN
    ============================================================ */
 
-function LockScreen({ theme, pin, biometricEnabled, onUnlock }) {
-  const [input, setInput] = useState('')
+function PinLockScreen({ theme, expectedPin, onUnlock, biometricEnabled }) {
+  const [pin, setPin] = useState('')
   const [error, setError] = useState(false)
-  const [tryingBio, setTryingBio] = useState(biometricEnabled)
-
-  const check = () => {
-    if (input === pin) onUnlock()
-    else { setError(true); setInput('') }
-  }
 
   const tryBiometric = useCallback(async () => {
-    setTryingBio(true)
+    if (!biometricEnabled) return
     const ok = await biometricAuthenticate()
-    setTryingBio(false)
     if (ok) onUnlock()
-  }, [onUnlock])
+  }, [biometricEnabled, onUnlock])
 
-  useEffect(() => { if (biometricEnabled) tryBiometric() }, []) // tentativo automatico all'apertura
+  useEffect(() => {
+    tryBiometric()
+  }, [tryBiometric])
 
-  return (
-    <div style={{ height: '100%', background: theme.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <Lock size={56} color={theme.primary} />
-      <div style={{ fontSize: 19, fontWeight: 700, color: theme.text, marginTop: 16 }}>App bloccata</div>
-      <div style={{ fontSize: 13, color: theme.subtext, marginTop: 4, marginBottom: 24 }}>
-        {tryingBio ? 'Verifica impronta/Face ID in corso...' : 'Inserisci il PIN per continuare'}
-      </div>
-      <input
-        type="password" inputMode="numeric" maxLength={6} value={input}
-        onChange={(e) => { setInput(e.target.value); setError(false) }}
-        onKeyDown={(e) => e.key === 'Enter' && check()}
-        style={{ ...inputStyle(theme), width: 160, textAlign: 'center', fontSize: 22, letterSpacing: 6, marginBottom: 8 }}
-        placeholder="••••" autoFocus
-      />
-      {error && <div style={{ color: theme.expense, fontSize: 12, marginBottom: 12 }}>PIN errato</div>}
-      <button onClick={check} style={{ marginTop: 16, padding: '12px 40px', borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
-        Sblocca
-      </button>
-      {biometricEnabled && (
-        <button onClick={tryBiometric} style={{ marginTop: 14, background: 'none', border: 'none', color: theme.primary, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <Fingerprint size={16} /> Usa impronta / Face ID
-        </button>
-      )}
-    </div>
-  )
-}
+  const press = (digit) => {
+    if (pin.length >= 8) return
+    const next = pin + digit
+    setPin(next)
+    setError(false)
+    if (next === expectedPin) {
+      onUnlock()
+    } else if (next.length >= expectedPin.length && next !== expectedPin) {
+      setError(true)
+      setTimeout(() => { setPin(''); setError(false) }, 600)
+    }
+  }
 
-/* ============================================================
-   BOTTOM NAVIGATION
-   ============================================================ */
+  const del = () => setPin(p => p.slice(0, -1))
 
-function BottomNav({ theme, tab, setTab }) {
-  const items = [
-    { key: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { key: 'transactions', label: 'Movimenti', icon: Receipt },
-    { key: 'analysis', label: 'Analisi', icon: BarChart3 },
-    { key: 'debts', label: 'Crediti', icon: Users },
-    { key: 'profile', label: 'Profilo', icon: User },
-    { key: 'settings', label: 'Impostazioni', icon: SettingsIcon },
-  ]
   return (
     <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, background: theme.card,
-      borderTop: `1px solid ${theme.border}`, display: 'flex', paddingBottom: 'env(safe-area-inset-bottom, 6px)',
+      position: 'fixed', inset: 0, background: theme.bg, zIndex: 200,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24,
     }}>
-      {items.map(it => (
-        <div key={it.key} onClick={() => setTab(it.key)} style={{
-          flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-          padding: '9px 0 6px', cursor: 'pointer', minWidth: 0,
+      <div style={{ width: 56, height: 56, borderRadius: 18, background: `${theme.primary}26`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+        <Lock size={26} color={theme.primary} />
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: theme.text, marginBottom: 8 }}>Money Tracker</div>
+      <div style={{ fontSize: 13, color: error ? theme.expense : theme.subtext, marginBottom: 24 }}>
+        {error ? 'PIN errato, riprova' : 'Inserisci il PIN per sbloccare'}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
+        {Array.from({ length: Math.max(4, expectedPin.length) }).map((_, i) => (
+          <div key={i} style={{
+            width: 14, height: 14, borderRadius: '50%',
+            background: i < pin.length ? (error ? theme.expense : theme.primary) : theme.border,
+            transition: 'all .2s',
+          }} />
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, width: '100%', maxWidth: 280 }}>
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(d => (
+          <button key={d} onClick={() => press(d)} style={{
+            height: 60, borderRadius: 18, border: 'none', background: theme.card, color: theme.text,
+            fontSize: 22, fontWeight: 700, cursor: 'pointer',
+          }}>
+            {d}
+          </button>
+        ))}
+        {biometricEnabled && isNative ? (
+          <button onClick={tryBiometric} style={{
+            height: 60, borderRadius: 18, border: 'none', background: theme.card, color: theme.primary,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+          }}>
+            <Fingerprint size={24} />
+          </button>
+        ) : <span />}
+        <button onClick={() => press('0')} style={{
+          height: 60, borderRadius: 18, border: 'none', background: theme.card, color: theme.text,
+          fontSize: 22, fontWeight: 700, cursor: 'pointer',
         }}>
-          <it.icon size={18} color={tab === it.key ? theme.primary : theme.subtext} />
-          <div style={{ fontSize: 9, color: tab === it.key ? theme.primary : theme.subtext, fontWeight: tab === it.key ? 700 : 400, whiteSpace: 'nowrap' }}>
-            {it.label}
-          </div>
-        </div>
-      ))}
+          0
+        </button>
+        <button onClick={del} style={{
+          height: 60, borderRadius: 18, border: 'none', background: theme.card, color: theme.text,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+        }}>
+          <X size={20} />
+        </button>
+      </div>
     </div>
   )
 }
@@ -1864,227 +1832,298 @@ function BottomNav({ theme, tab, setTab }) {
    ============================================================ */
 
 export default function App() {
-  const [tab, setTab] = useState('dashboard')
-  const [unlocked, setUnlocked] = useState(false)
-  const [activeContactId, setActiveContactId] = useState(null)
-  const [showAddTx, setShowAddTx] = useState(false)
-  const [showAddContact, setShowAddContact] = useState(false)
-
-  const [settings, setSettings] = useLocalStorageState('mt_settings', { theme: 'system', lockEnabled: false, pin: '' })
+  const [profile, setProfile] = useLocalStorageState('mt_profile', null)
   const [categories, setCategories] = useLocalStorageState('mt_categories', DEFAULT_CATEGORIES)
   const [accounts, setAccounts] = useLocalStorageState('mt_accounts', DEFAULT_ACCOUNTS)
   const [transactions, setTransactions] = useLocalStorageState('mt_transactions', [])
   const [contacts, setContacts] = useLocalStorageState('mt_contacts', [])
-  const [debtEntries, setDebtEntries] = useLocalStorageState('mt_debtEntries', [])
+  const [debtEntries, setDebtEntries] = useLocalStorageState('mt_debt_entries', [])
   const [goals, setGoals] = useLocalStorageState('mt_goals', [])
-  const [profile, setProfile] = useLocalStorageState('mt_profile', { name: '', birthYear: null, netWorth: 0, salary: 0 })
-  const [onboarding, setOnboarding] = useLocalStorageState('mt_onboarding', { onboarded: false })
+  const [settings, setSettings] = useLocalStorageState('mt_settings', {
+    theme: 'system', lockEnabled: false, pin: '', biometricEnabled: false,
+    remindersEnabled: true, reminderTime: '09:00',
+  })
+
+  const [activeTab, setActiveTab] = useState('dashboard')
+  const [selectedContactId, setSelectedContactId] = useState(null)
+  const [showAddTx, setShowAddTx] = useState(false)
+  const [showAddContact, setShowAddContact] = useState(false)
+  const [locked, setLocked] = useState(() => settings.lockEnabled && !!settings.pin)
 
   const theme = useTheme(settings.theme)
-  const remindersEnabled = settings.remindersEnabled !== false
-  const reminderTime = settings.reminderTime || '09:00'
 
-  useEffect(() => { if (!settings.lockEnabled) setUnlocked(true) }, [settings.lockEnabled])
+  useEffect(() => {
+    debtEntries.forEach(e => {
+      if (e.reminderDate && e.type === 'loanGiven' && settings.remindersEnabled) {
+        const c = contacts.find(x => x.id === e.contactId)
+        if (c) scheduleDebtReminder(e, c.name)
+      }
+    })
+  }, [debtEntries, contacts, settings.remindersEnabled])
 
-  const addTransaction = (tx) => setTransactions(prev => [...prev, tx])
-  const deleteTransaction = (id) => setTransactions(prev => prev.filter(t => t.id !== id))
-
-  const addContact = (c) => setContacts(prev => [...prev, c])
-  const deleteContact = (id) => {
-    debtEntries.filter(e => e.contactId === id).forEach(e => cancelDebtReminder(e.id))
-    setContacts(prev => prev.filter(c => c.id !== id))
-    setDebtEntries(prev => prev.filter(e => e.contactId !== id))
-  }
-  const addDebtEntry = (contactId, entry) => {
-    setDebtEntries(prev => [...prev, { ...entry, contactId }])
-    if (remindersEnabled && entry.reminderDate && entry.type === 'loanGiven') {
-      const contact = contacts.find(c => c.id === contactId)
-      scheduleDebtReminder(entry, contact?.name || 'Contatto')
+  const finishOnboarding = ({ profile: p, categories: c, contacts: cnt }) => {
+    setProfile(p)
+    if (c?.length) setCategories(c)
+    if (cnt?.length) setContacts(cnt)
+    if (p.netWorth) {
+      setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth } : a))
     }
   }
-  const deleteDebtEntry = (id) => {
-    setDebtEntries(prev => prev.filter(e => e.id !== id))
-    cancelDebtReminder(id)
+
+  const handleAddTx = (tx) => setTransactions(prev => [tx, ...prev])
+  const handleDeleteTx = (id) => setTransactions(prev => prev.filter(t => t.id !== id))
+
+  const handleAddContact = (c) => setContacts(prev => [...prev, c])
+  const handleDeleteContact = (contactId) => {
+    debtEntries.filter(e => e.contactId === contactId).forEach(e => cancelDebtReminder(e.id))
+    setContacts(prev => prev.filter(c => c.id !== contactId))
+    setDebtEntries(prev => prev.filter(e => e.contactId !== contactId))
+    setSelectedContactId(null)
   }
-  const updateDebtEntryAttachments = (entryId, attachments) => {
+
+  const handleAddDebtEntry = (entry) => {
+    const full = { ...entry, contactId: selectedContactId }
+    setDebtEntries(prev => [full, ...prev])
+    if (full.type === 'loanGiven' && settings.remindersEnabled && full.reminderDate) {
+      const c = contacts.find(x => x.id === selectedContactId)
+      if (c) scheduleDebtReminder(full, c.name)
+    }
+  }
+
+  const handleDeleteDebtEntry = (id) => {
+    cancelDebtReminder(id)
+    setDebtEntries(prev => prev.filter(e => e.id !== id))
+  }
+
+  const handleUpdateAttachments = (entryId, attachments) => {
     setDebtEntries(prev => prev.map(e => e.id === entryId ? { ...e, attachments } : e))
   }
 
-  const addGoal = (g) => setGoals(prev => [...prev, g])
-  const deleteGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id))
-
-  const saveProfile = (p) => {
-    setProfile(p)
-    setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth || 0 } : a))
-  }
-
-  // Elimina la categoria; le transazioni che la usano conservano nome/colore/icona (snapshot)
-  const removeCategory = (id) => {
-    const cat = categories.find(c => c.id === id)
-    if (!cat) return
-    setTransactions(prev => prev.map(t =>
-      t.categoryId === id && !t.categoryName
-        ? { ...t, categoryName: cat.name, categoryColor: cat.color, categoryIcon: cat.icon }
-        : t
-    ))
-    setCategories(prev => prev.filter(c => c.id !== id))
-  }
-
-  const toggleReminders = (on) => {
-    setSettings(s => ({ ...s, remindersEnabled: on }))
-    if (on) {
-      const now = Date.now()
-      debtEntries
-        .filter(e => e.type === 'loanGiven' && e.reminderDate && new Date(e.reminderDate).getTime() > now)
-        .forEach(e => scheduleDebtReminder(e, contacts.find(c => c.id === e.contactId)?.name || 'Contatto'))
-    } else {
-      debtEntries.filter(e => e.reminderDate).forEach(e => cancelDebtReminder(e.id))
-    }
-  }
-
-  const changeReminderTime = (t) => setSettings(s => ({ ...s, reminderTime: t }))
-
-  const finishOnboarding = ({ profile: p, categories: cats, contacts: newContacts }) => {
-    setProfile(p)
-    setCategories(cats)
-    if (newContacts.length) setContacts(prev => [...prev, ...newContacts])
-    if (p.netWorth > 0) {
-      setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth } : a))
-    }
-    if (p.salary > 0) {
-      addTransaction({
-        id: uuid(), amount: p.salary, isExpense: false, categoryId: 'salary', accountId: 'bank',
-        date: new Date().toISOString(), notes: 'Stipendio (impostato in onboarding)',
-        categoryName: cats.find(c => c.id === 'salary')?.name,
-        categoryColor: cats.find(c => c.id === 'salary')?.color,
-        categoryIcon: cats.find(c => c.id === 'salary')?.icon,
-      })
-    }
-    setOnboarding({ onboarded: true })
-    requestNotificationPermission().catch(() => {})
-  }
+  const handleAddGoal = (g) => setGoals(prev => [g, ...prev])
+  const handleDeleteGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id))
 
   const exportBackup = () => {
-    const data = { version: 3, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries, goals }
+    const data = { profile, categories, accounts, transactions, contacts, debtEntries, goals, settings, version: 1 }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `money-tracker-backup-${Date.now()}.json`
+    a.download = `money-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   const exportCsv = () => {
-    const rows = [['data', 'tipo', 'importo', 'categoria', 'conto', 'note']]
-    transactions.forEach(t => {
+    const headers = ['ID', 'Data', 'Tipo', 'Importo', 'Categoria', 'Conto', 'Note']
+    const rows = transactions.map(t => {
       const cat = catView(t, categories)
       const acc = accounts.find(a => a.id === t.accountId)
-      rows.push([t.date, t.isExpense ? 'Uscita' : 'Entrata', t.amount, cat.name, acc?.name || '', t.notes || ''])
+      return [
+        t.id,
+        t.date,
+        t.isExpense ? 'Uscita' : 'Entrata',
+        t.amount,
+        `"${cat.name.replace(/"/g, '""')}"`,
+        `"${(acc?.name || '').replace(/"/g, '""')}"`,
+        `"${(t.notes || '').replace(/"/g, '""')}"`,
+      ].join(',')
     })
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
+    const csv = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `transazioni-${Date.now()}.csv`
+    a.download = `transazioni-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   const importBackup = (file) => {
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = (e) => {
       try {
-        const data = JSON.parse(reader.result)
-        if (data.profile) setProfile(data.profile)
+        const data = JSON.parse(e.target.result)
+        if (data.profile !== undefined) setProfile(data.profile)
         if (data.categories) setCategories(data.categories)
         if (data.accounts) setAccounts(data.accounts)
         if (data.transactions) setTransactions(data.transactions)
         if (data.contacts) setContacts(data.contacts)
         if (data.debtEntries) setDebtEntries(data.debtEntries)
         if (data.goals) setGoals(data.goals)
-        alert('Backup importato con successo')
+        if (data.settings) setSettings(data.settings)
+        alert('Backup importato con successo!')
       } catch {
-        alert('File non valido')
+        alert('File di backup non valido')
       }
     }
     reader.readAsText(file)
   }
 
-  if (!onboarding.onboarded) {
+  if (locked && settings.lockEnabled && settings.pin) {
+    return <PinLockScreen theme={theme} expectedPin={settings.pin} biometricEnabled={settings.biometricEnabled} onUnlock={() => setLocked(false)} />
+  }
+
+  if (!profile) {
     return <Onboarding theme={theme} onFinish={finishOnboarding} />
   }
 
-  if (settings.lockEnabled && !unlocked) {
-    return <LockScreen theme={theme} pin={settings.pin} biometricEnabled={!!settings.biometricEnabled} onUnlock={() => setUnlocked(true)} />
-  }
-
-  const activeContact = activeContactId ? contacts.find(c => c.id === activeContactId) : null
+  const selectedContact = contacts.find(c => c.id === selectedContactId)
 
   return (
-    <div style={{ height: '100%', background: theme.bg, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-      <style>{`@keyframes slideUp { from { transform: translateY(30px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }`}</style>
+    <div style={{
+      background: theme.bg, minHeight: '100vh', color: theme.text,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      WebkitTapHighlightColor: 'transparent',
+    }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', minHeight: '100vh', position: 'relative' }}>
+        {activeTab === 'dashboard' && (
+          <DashboardScreen
+            theme={theme} transactions={transactions} accounts={accounts} categories={categories}
+            contacts={contacts} debtEntries={debtEntries} profile={profile} goals={goals}
+            onAddGoal={handleAddGoal} onDeleteGoal={handleDeleteGoal}
+          />
+        )}
 
-      {tab === 'dashboard' && (
-        <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} profile={profile} goals={goals} onAddGoal={addGoal} onDeleteGoal={deleteGoal} />
-      )}
+        {activeTab === 'transactions' && (
+          <TransactionsScreen
+            theme={theme} transactions={transactions} categories={categories}
+            accounts={accounts} onDelete={handleDeleteTx}
+          />
+        )}
 
-      {tab === 'transactions' && (
-        <TransactionsScreen theme={theme} transactions={transactions} categories={categories} accounts={accounts} onDelete={deleteTransaction} />
-      )}
+        {activeTab === 'analysis' && (
+          <AnalysisScreen theme={theme} transactions={transactions} categories={categories} />
+        )}
 
-      {tab === 'analysis' && (
-        <AnalysisScreen theme={theme} transactions={transactions} categories={categories} />
-      )}
+        {activeTab === 'debts' && !selectedContactId && (
+          <DebtsScreen
+            theme={theme} contacts={contacts} debtEntries={debtEntries}
+            onOpenContact={setSelectedContactId}
+          />
+        )}
 
-      {tab === 'debts' && !activeContact && (
-        <DebtsScreen theme={theme} contacts={contacts} debtEntries={debtEntries} onOpenContact={setActiveContactId} />
-      )}
+        {activeTab === 'debts' && selectedContactId && selectedContact && (
+          <ContactDetailScreen
+            theme={theme} contact={selectedContact}
+            entries={debtEntries.filter(e => e.contactId === selectedContactId)}
+            onBack={() => setSelectedContactId(null)}
+            onAdd={handleAddDebtEntry}
+            onDelete={handleDeleteDebtEntry}
+            onDeleteContact={() => handleDeleteContact(selectedContactId)}
+            onUpdateAttachments={handleUpdateAttachments}
+            reminderTime={settings.reminderTime}
+            remindersEnabled={settings.remindersEnabled}
+          />
+        )}
 
-      {tab === 'debts' && activeContact && (
-        <ContactDetailScreen
-          theme={theme} contact={activeContact}
-          entries={debtEntries.filter(e => e.contactId === activeContact.id)}
-          onBack={() => setActiveContactId(null)}
-          onAdd={(entry) => addDebtEntry(activeContact.id, entry)}
-          onDelete={deleteDebtEntry}
-          onDeleteContact={() => { deleteContact(activeContact.id); setActiveContactId(null) }}
-          onUpdateAttachments={updateDebtEntryAttachments}
-          reminderTime={reminderTime} remindersEnabled={remindersEnabled}
-        />
-      )}
+        {activeTab === 'profile' && (
+          <ProfileScreen
+            theme={theme} profile={profile} onSaveProfile={setProfile}
+            categories={categories} onCategoriesChange={setCategories}
+            onRemoveCategory={(id) => setCategories(prev => prev.filter(c => c.id !== id))}
+            remindersEnabled={settings.remindersEnabled}
+            onToggleReminders={(on) => setSettings(s => ({ ...s, remindersEnabled: on }))}
+            reminderTime={settings.reminderTime}
+            onChangeReminderTime={(t) => setSettings(s => ({ ...s, reminderTime: t }))}
+          />
+        )}
 
-      {tab === 'profile' && (
-        <ProfileScreen
-          theme={theme} profile={profile} onSaveProfile={saveProfile}
-          categories={categories} onCategoriesChange={setCategories} onRemoveCategory={removeCategory}
-          remindersEnabled={remindersEnabled} onToggleReminders={toggleReminders}
-          reminderTime={reminderTime} onChangeReminderTime={changeReminderTime}
-        />
-      )}
+        {activeTab === 'settings' && (
+          <SettingsScreen
+            theme={theme} settings={settings} setSettings={setSettings}
+            exportBackup={exportBackup} importBackup={importBackup} exportCsv={exportCsv}
+          />
+        )}
 
-      {tab === 'settings' && (
-        <SettingsScreen theme={theme} settings={settings} setSettings={setSettings} exportBackup={exportBackup} exportCsv={exportCsv} importBackup={importBackup} />
-      )}
+        {/* BARRA DI NAVIGAZIONE IN BASSO */}
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, background: theme.card,
+          borderTop: `1px solid ${theme.border}`, zIndex: 40,
+        }}>
+          <div style={{
+            maxWidth: 480, margin: '0 auto', height: 64, display: 'flex',
+            alignItems: 'center', justifyContent: 'space-around', padding: '0 8px',
+          }}>
+            <button
+              onClick={() => { setActiveTab('dashboard'); setSelectedContactId(null) }}
+              style={{ background: 'none', border: 'none', color: activeTab === 'dashboard' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <LayoutDashboard size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Home</span>
+            </button>
 
-      {(tab === 'dashboard' || tab === 'transactions' || (tab === 'debts' && !activeContact)) && (
-        <button
-          onClick={() => tab === 'debts' ? setShowAddContact(true) : setShowAddTx(true)}
-          style={{
-            position: 'fixed', right: 18, bottom: 78, width: 56, height: 56, borderRadius: 18,
-            background: theme.primary, border: 'none', boxShadow: '0 8px 20px rgba(0,0,0,0.3)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 40,
-          }}
-        >
-          {tab === 'debts' ? <UserPlus size={24} color="#fff" /> : <Plus size={24} color="#fff" />}
-        </button>
-      )}
+            <button
+              onClick={() => { setActiveTab('transactions'); setSelectedContactId(null) }}
+              style={{ background: 'none', border: 'none', color: activeTab === 'transactions' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <Receipt size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Movimenti</span>
+            </button>
 
-      <BottomNav theme={theme} tab={tab} setTab={(t) => { setTab(t); setActiveContactId(null) }} />
+            <button
+              onClick={() => { setActiveTab('analysis'); setSelectedContactId(null) }}
+              style={{ background: 'none', border: 'none', color: activeTab === 'analysis' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <BarChart3 size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Analisi</span>
+            </button>
 
-      {showAddTx && <AddTransactionModal theme={theme} categories={categories} accounts={accounts} onClose={() => setShowAddTx(false)} onSave={addTransaction} />}
-      {showAddContact && <AddContactModal theme={theme} onClose={() => setShowAddContact(false)} onSave={addContact} />}
+            {/* BOTTONE AZIONE CENTRALE (+) */}
+            <button
+              onClick={() => {
+                if (activeTab === 'debts') setShowAddContact(true)
+                else setShowAddTx(true)
+              }}
+              style={{
+                width: 48, height: 48, borderRadius: '50%', background: theme.primary,
+                border: 'none', color: '#fff', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 12px rgba(99,102,241,0.4)',
+                transform: 'translateY(-12px)', flexShrink: 0,
+              }}
+            >
+              <Plus size={24} />
+            </button>
+
+            <button
+              onClick={() => setActiveTab('debts')}
+              style={{ background: 'none', border: 'none', color: activeTab === 'debts' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <Users size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Debiti</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('profile'); setSelectedContactId(null) }}
+              style={{ background: 'none', border: 'none', color: activeTab === 'profile' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <User size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Profilo</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('settings'); setSelectedContactId(null) }}
+              style={{ background: 'none', border: 'none', color: activeTab === 'settings' ? theme.primary : theme.subtext, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, cursor: 'pointer', flex: 1 }}
+            >
+              <SettingsIcon size={20} />
+              <span style={{ fontSize: 10, fontWeight: 600 }}>Opzioni</span>
+            </button>
+          </div>
+        </div>
+
+        {/* MODALI */}
+        {showAddTx && (
+          <AddTransactionModal
+            theme={theme} categories={categories} accounts={accounts}
+            onClose={() => setShowAddTx(false)} onSave={handleAddTx}
+          />
+        )}
+
+        {showAddContact && (
+          <AddContactModal
+            theme={theme} onClose={() => setShowAddContact(false)} onSave={handleAddContact}
+          />
+        )}
+      </div>
     </div>
   )
 }
