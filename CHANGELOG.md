@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.7 — 2026-10-01
+Restituzioni collegate al movimento originale e allegati aperti dentro l'app.
+
+- **Restituzioni collegate**: quando registri una "Restituzione ricevuta" o una
+  "Restituzione effettuata" puoi collegarla a un prestito erogato/debito contratto
+  già esistente con quel contatto (il menu mostra data, importo e quanto resta su
+  ciascuno). Nella scheda del contatto ogni movimento originale mostra sotto di sé
+  le restituzioni collegate, con il rimanente aggiornato automaticamente o "Saldato
+  per intero" quando arriva a zero. Il collegamento resta facoltativo: le
+  restituzioni senza un movimento collegato restano in una sezione "Altre
+  restituzioni" come prima. Eliminando un movimento originale, le sue restituzioni
+  collegate non vengono cancellate: restano come movimenti a sé.
+- **Allegati aperti dentro l'app**: toccando una prova ora si apre un visualizzatore
+  a schermo intero nell'app stessa, con il file già interamente caricato (niente
+  passaggio a un'app esterna) — immagini a piena vista, PDF incorporato, file di
+  testo mostrati direttamente. Solo per i tipi che il telefono non può mostrare
+  in-app resta, come scelta esplicita, il pulsante "Scarica / apri con un'altra
+  app".
+
+## v1.6 — 2026-09-30
+Fix: finestra di sblocco impronta in italiano anche se il telefono è in inglese.
+
+- La richiesta di impronta/Face ID su Android (es. Samsung) mostrava il titolo di
+  sistema in inglese ("Fingerprint authentication") quando la lingua del telefono
+  era impostata in inglese, perché non specificavamo un titolo esplicito e Android
+  usava il proprio default di sistema. Ora il titolo e il sottotitolo della finestra
+  sono impostati esplicitamente in italiano ("Sblocca Money Tracker" / "Verifica la
+  tua identità per continuare"), indipendentemente dalla lingua del telefono.
+
 ## v1.5 — 2026-09-30
 Fix: la welcome page non si ripresenta più a chi ha già l'app con dati esistenti.
 
