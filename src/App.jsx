@@ -46,6 +46,12 @@ const DEFAULT_ACCOUNTS = [
 // Colore di partenza del selettore per ogni nuovo elemento (categoria, ecc.)
 const PURE_RED = '#FF0000'
 
+// Quanto resta di un prestito erogato/debito contratto, date le restituzioni collegate
+function remainingForOriginal(original, allEntries) {
+  const repaid = allEntries.filter(e => e.linkedEntryId === original.id).reduce((s, e) => s + e.amount, 0)
+  return Math.max(0, original.amount - repaid)
+}
+
 const DEBT_TYPES = {
   loanGiven: { label: 'Prestito erogato', sign: 1 },
   debtTaken: { label: 'Debito contratto', sign: -1 },
@@ -289,7 +295,15 @@ async function biometricCheck() {
 async function biometricAuthenticate() {
   if (!isNative) return false
   try {
-    await BiometricAuth.authenticate({ reason: 'Sblocca Money Tracker', cancelTitle: 'Usa il PIN' })
+    await BiometricAuth.authenticate({
+      reason: 'Sblocca Money Tracker',
+      cancelTitle: 'Usa il PIN',
+      // Su Android/Samsung, senza questi due campi il sistema mostra un titolo
+      // di default nella lingua di sistema del telefono (es. "Fingerprint
+      // authentication" se il telefono è in inglese), ignorando la lingua dell'app.
+      androidTitle: 'Sblocca Money Tracker',
+      androidSubtitle: 'Verifica la tua identità per continuare',
+    })
     return true
   } catch {
     return false
@@ -588,11 +602,71 @@ function CategoryEditor({ theme, cats, onChange, onRemove, includeIncome = false
   )
 }
 
+// Visualizzatore di un allegato APERTO DENTRO L'APP (nessun passaggio a un'app
+// esterna): immagini a schermo intero, PDF incorporato, testo mostrato direttamente.
+// Il contenuto è già interamente in memoria (data URL), quindi qui è sempre "caricato
+// per intero", non in streaming. Solo per i tipi che il WebView non può mostrare
+// inline resta disponibile, come scelta esplicita, l'apertura con un'altra app.
+function AttachmentViewerModal({ theme, attachment, onClose }) {
+  const isImage = attachment.type?.startsWith('image/')
+  const isPdf = attachment.type === 'application/pdf'
+  const isText = attachment.type?.startsWith('text/') || attachment.type === 'application/json'
+  const [textContent, setTextContent] = useState(null)
+
+  useEffect(() => {
+    if (!isText) return
+    try {
+      const base64 = attachment.dataUrl.split(',')[1] || ''
+      setTextContent(decodeURIComponent(escape(atob(base64))))
+    } catch {
+      setTextContent('(impossibile leggere il contenuto del file)')
+    }
+  }, [attachment, isText])
+
+  return (
+    <Modal theme={theme} title={attachment.name} onClose={onClose}>
+      <div style={{ fontSize: 11, color: theme.subtext, marginBottom: 14 }}>{fmtBytes(attachment.size)}</div>
+
+      {isImage && (
+        <img
+          src={attachment.dataUrl} alt={attachment.name}
+          style={{ width: '100%', maxHeight: '65vh', objectFit: 'contain', borderRadius: 12, background: theme.bg, display: 'block' }}
+        />
+      )}
+      {isPdf && (
+        <embed src={attachment.dataUrl} type="application/pdf" style={{ width: '100%', height: '65vh', border: 'none', borderRadius: 12 }} />
+      )}
+      {isText && (
+        <pre style={{
+          width: '100%', maxHeight: '65vh', overflow: 'auto', background: theme.bg, borderRadius: 12,
+          padding: 12, fontSize: 12, color: theme.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
+        }}>
+          {textContent ?? 'Caricamento...'}
+        </pre>
+      )}
+      {!isImage && !isPdf && !isText && (
+        <div style={{ textAlign: 'center', padding: '24px 0', color: theme.subtext, fontSize: 13, lineHeight: 1.5 }}>
+          <FileText size={40} color={theme.subtext} />
+          <div style={{ marginTop: 10 }}>Anteprima non disponibile dentro l'app per questo tipo di file.</div>
+        </div>
+      )}
+
+      <button
+        onClick={() => openAttachment(attachment)}
+        style={{ width: '100%', marginTop: 16, padding: 13, borderRadius: 14, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, fontWeight: 700, cursor: 'pointer' }}
+      >
+        Scarica / apri con un'altra app
+      </button>
+    </Modal>
+  )
+}
+
 // Selettore/gestore di allegati (prove) su un movimento di credito/debito: foto,
 // PDF o qualsiasi file. Anteprima per le immagini, icona generica per gli altri file.
 function AttachmentPicker({ theme, attachments, onChange, compact = false }) {
   const inputRef = React.useRef(null)
   const [busy, setBusy] = useState(false)
+  const [viewing, setViewing] = useState(null)
 
   const handleFiles = async (files) => {
     setBusy(true)
@@ -619,7 +693,7 @@ function AttachmentPicker({ theme, attachments, onChange, compact = false }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
           {attachments.map(a => (
             <div key={a.id} style={{ position: 'relative', width: thumbSize }}>
-              <div onClick={() => openAttachment(a)} style={{ cursor: 'pointer' }}>
+              <div onClick={() => setViewing(a)} style={{ cursor: 'pointer' }}>
                 {a.type?.startsWith('image/') ? (
                   <img src={a.dataUrl} alt={a.name} style={{ width: thumbSize, height: thumbSize, objectFit: 'cover', borderRadius: 10, border: `1px solid ${theme.border}`, display: 'block' }} />
                 ) : (
@@ -650,6 +724,7 @@ function AttachmentPicker({ theme, attachments, onChange, compact = false }) {
         ref={inputRef} type="file" multiple style={{ display: 'none' }}
         onChange={(e) => { if (e.target.files.length) handleFiles([...e.target.files]); e.target.value = '' }}
       />
+      {viewing && <AttachmentViewerModal theme={theme} attachment={viewing} onClose={() => setViewing(null)} />}
     </div>
   )
 }
@@ -1142,6 +1217,35 @@ function DebtsScreen({ theme, contacts, debtEntries, onOpenContact }) {
   )
 }
 
+// Riga di un singolo movimento di credito/debito, usata sia per i movimenti
+// originali (prestito/debito) sia per le restituzioni collegate (versione compatta)
+function DebtEntryRow({ theme, entry, onDelete, onAttach, compact = false }) {
+  const positive = DEBT_TYPES[entry.type].sign > 0
+  const attachments = entry.attachments || []
+  return (
+    <div style={{ background: compact ? 'transparent' : theme.card, borderRadius: compact ? 0 : 16, padding: compact ? '8px 0' : 12, marginBottom: compact ? 0 : 8 }}>
+      <div onClick={onDelete} style={{ display: 'flex', alignItems: 'center', gap: compact ? 8 : 12, cursor: 'pointer' }}>
+        <IconBubble name={positive ? 'income' : 'other'} color={positive ? theme.income : theme.expense} size={compact ? 13 : 16} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: compact ? 12 : 13, color: theme.text }}>{DEBT_TYPES[entry.type].label}</div>
+          <div style={{ fontSize: compact ? 11 : 12, color: theme.subtext }}>
+            {fmtDate(entry.date)}{entry.notes ? ` · ${entry.notes}` : ''}{entry.reminderDate ? ` · 🔔 ${new Date(entry.reminderDate).toLocaleDateString('it-IT')}` : ''}
+          </div>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: compact ? 13 : 14, color: positive ? theme.income : theme.expense }}>
+          {positive ? '+' : '-'}{fmtCurrency(entry.amount)}
+        </div>
+      </div>
+      <button
+        onClick={onAttach}
+        style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: theme.subtext, fontSize: 11, cursor: 'pointer', padding: '6px 0 0', marginLeft: compact ? 21 : 42 }}
+      >
+        <Paperclip size={11} /> {attachments.length > 0 ? `${attachments.length} prova/e allegata/e` : 'Aggiungi prova'}
+      </button>
+    </div>
+  )
+}
+
 function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete, onDeleteContact, onUpdateAttachments, reminderTime, remindersEnabled }) {
   const balance = entries.reduce((s, e) => s + e.amount * DEBT_TYPES[e.type].sign, 0)
   const [showAdd, setShowAdd] = useState(false)
@@ -1179,33 +1283,53 @@ function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete,
 
       {entries.length === 0 && <div style={{ textAlign: 'center', color: theme.subtext, padding: 20 }}>Nessun movimento ancora</div>}
 
-      {[...entries].sort((a, b) => new Date(b.date) - new Date(a.date)).map(e => {
-        const positive = DEBT_TYPES[e.type].sign > 0
-        const attachments = e.attachments || []
+      {/* Prestiti erogati e debiti contratti, con sotto le eventuali restituzioni collegate (dato -> ridato) */}
+      {[...entries].filter(e => e.type === 'loanGiven' || e.type === 'debtTaken').sort((a, b) => new Date(b.date) - new Date(a.date)).map(orig => {
+        const linked = entries.filter(e => e.linkedEntryId === orig.id).sort((a, b) => new Date(a.date) - new Date(b.date))
+        const remaining = remainingForOriginal(orig, entries)
+        const fullyRepaid = linked.length > 0 && remaining <= 0
         return (
-          <div key={e.id} style={{ background: theme.card, borderRadius: 16, padding: 12, marginBottom: 8 }}>
-            <div onClick={() => { if (confirm('Eliminare questo movimento?')) onDelete(e.id) }} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-              <IconBubble name={positive ? 'income' : 'other'} color={positive ? theme.income : theme.expense} size={16} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: theme.text }}>{DEBT_TYPES[e.type].label}</div>
-                <div style={{ fontSize: 12, color: theme.subtext }}>{fmtDate(e.date)}{e.notes ? ` · ${e.notes}` : ''}{e.reminderDate ? ` · 🔔 ${new Date(e.reminderDate).toLocaleDateString('it-IT')}` : ''}</div>
+          <div key={orig.id} style={{ marginBottom: 8 }}>
+            <DebtEntryRow
+              theme={theme} entry={orig}
+              onDelete={() => { if (confirm('Eliminare questo movimento? Le restituzioni collegate resteranno come movimenti a sé.')) onDelete(orig.id) }}
+              onAttach={() => setAttachEntry(orig)}
+            />
+            {linked.length > 0 && (
+              <div style={{ marginLeft: 20, marginTop: 4, paddingLeft: 12, borderLeft: `2px solid ${theme.border}` }}>
+                <div style={{ fontSize: 11, color: fullyRepaid ? theme.income : theme.subtext, fontWeight: 600, padding: '6px 0' }}>
+                  {fullyRepaid ? 'Saldato per intero ✓' : `Rimanente: ${fmtCurrency(remaining)}`}
+                </div>
+                {linked.map(r => (
+                  <DebtEntryRow
+                    key={r.id} theme={theme} entry={r} compact
+                    onDelete={() => { if (confirm('Eliminare questa restituzione?')) onDelete(r.id) }}
+                    onAttach={() => setAttachEntry(r)}
+                  />
+                ))}
               </div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: positive ? theme.income : theme.expense }}>
-                {positive ? '+' : '-'}{fmtCurrency(e.amount)}
-              </div>
-            </div>
-            <button
-              onClick={() => setAttachEntry(e)}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: theme.subtext, fontSize: 11, cursor: 'pointer', padding: '8px 0 0', marginLeft: 42 }}
-            >
-              <Paperclip size={12} /> {attachments.length > 0 ? `${attachments.length} prova/e allegata/e` : 'Aggiungi prova'}
-            </button>
+            )}
           </div>
         )
       })}
 
+      {/* Restituzioni non collegate a nessun movimento specifico */}
+      {entries.filter(e => (e.type === 'repaymentReceived' || e.type === 'repaymentMade') && !e.linkedEntryId).length > 0 && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: theme.subtext, margin: '18px 0 8px' }}>ALTRE RESTITUZIONI</div>
+      )}
+      {[...entries]
+        .filter(e => (e.type === 'repaymentReceived' || e.type === 'repaymentMade') && !e.linkedEntryId)
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .map(e => (
+          <DebtEntryRow
+            key={e.id} theme={theme} entry={e}
+            onDelete={() => { if (confirm('Eliminare questo movimento?')) onDelete(e.id) }}
+            onAttach={() => setAttachEntry(e)}
+          />
+        ))}
+
       {showAdd && (
-        <AddDebtEntryModal theme={theme} reminderTime={reminderTime} remindersEnabled={remindersEnabled} onClose={() => setShowAdd(false)} onSave={(entry) => { onAdd(entry); setShowAdd(false) }} />
+        <AddDebtEntryModal theme={theme} existingEntries={entries} reminderTime={reminderTime} remindersEnabled={remindersEnabled} onClose={() => setShowAdd(false)} onSave={(entry) => { onAdd(entry); setShowAdd(false) }} />
       )}
 
       {attachEntry && (
@@ -1218,19 +1342,27 @@ function ContactDetailScreen({ theme, contact, entries, onBack, onAdd, onDelete,
   )
 }
 
-function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', remindersEnabled = true }) {
+function AddDebtEntryModal({ theme, onClose, onSave, existingEntries = [], reminderTime = '09:00', remindersEnabled = true }) {
   const [type, setType] = useState('loanGiven')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [reminderDate, setReminderDate] = useState('')
   const [notes, setNotes] = useState('')
   const [attachments, setAttachments] = useState([])
+  const [linkedEntryId, setLinkedEntryId] = useState('')
+
+  // Una restituzione ricevuta salda un prestito erogato; una restituzione effettuata salda un debito contratto
+  const sourceType = type === 'repaymentReceived' ? 'loanGiven' : type === 'repaymentMade' ? 'debtTaken' : null
+  const candidates = sourceType ? existingEntries.filter(e => e.type === sourceType) : []
+
+  const changeType = (t) => { setType(t); setLinkedEntryId('') }
 
   const save = () => {
     const val = parseFloat(amount.replace(',', '.'))
     if (!val || val <= 0) { alert('Inserisci un importo valido'); return }
     onSave({
       id: uuid(), amount: val, type, date: new Date(date).toISOString(), notes, attachments,
+      linkedEntryId: sourceType && linkedEntryId ? linkedEntryId : null,
       reminderDate: reminderDate ? new Date(`${reminderDate}T${reminderTime}:00`).toISOString() : null,
     })
   }
@@ -1240,7 +1372,7 @@ function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', rem
       <div style={{ fontSize: 13, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Tipo di movimento</div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
         {Object.entries(DEBT_TYPES).map(([key, val]) => (
-          <ChipButton key={key} active={type === key} color={theme.primary} theme={theme} onClick={() => setType(key)}>{val.label}</ChipButton>
+          <ChipButton key={key} active={type === key} color={theme.primary} theme={theme} onClick={() => changeType(key)}>{val.label}</ChipButton>
         ))}
       </div>
 
@@ -1262,6 +1394,29 @@ function AddDebtEntryModal({ theme, onClose, onSave, reminderTime = '09:00', rem
           {!remindersEnabled && (
             <div style={{ fontSize: 11, color: theme.expense, marginBottom: 18 }}>Le notifiche di riscossione sono disattivate: attivale dal Profilo.</div>
           )}
+        </>
+      )}
+
+      {sourceType && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>Collega a un movimento esistente (opzionale)</div>
+          {candidates.length > 0 ? (
+            <select style={{ ...inputStyle(theme), marginBottom: 8 }} value={linkedEntryId} onChange={(e) => setLinkedEntryId(e.target.value)}>
+              <option value="">Nessun collegamento (generico)</option>
+              {candidates.map(c => (
+                <option key={c.id} value={c.id}>
+                  {fmtDate(c.date)} · {fmtCurrency(c.amount)} (rimanente {fmtCurrency(remainingForOriginal(c, existingEntries))})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ fontSize: 11, color: theme.subtext, marginBottom: 8 }}>
+              Nessun "{DEBT_TYPES[sourceType].label.toLowerCase()}" registrato a cui collegarsi: verrà salvato come movimento generico.
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: theme.subtext, marginBottom: 18, lineHeight: 1.4 }}>
+            Collegandolo, questa restituzione viene scalata da quel movimento così puoi vedere quanto resta.
+          </div>
         </>
       )}
 
@@ -1903,7 +2058,8 @@ export default function App() {
     }
   }
   const deleteDebtEntry = (id) => {
-    setDebtEntries(prev => prev.filter(e => e.id !== id))
+    // Scollega (senza eliminarle) le eventuali restituzioni collegate a questo movimento
+    setDebtEntries(prev => prev.filter(e => e.id !== id).map(e => e.linkedEntryId === id ? { ...e, linkedEntryId: null } : e))
     cancelDebtReminder(id)
   }
   const updateDebtEntryAttachments = (entryId, attachments) => {
