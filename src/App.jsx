@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { BiometricAuth } from '@aparajita/capacitor-biometric-auth'
+import { Filesystem, Directory } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, ResponsiveContainer, Tooltip,
 } from 'recharts'
@@ -142,7 +144,22 @@ function readFileAsDataURL(file) {
   })
 }
 
-function openAttachment(a) {
+async function openAttachment(a) {
+  if (isNative) {
+    // Nella WebView di Android/iOS il trucco <a download> spesso non fa nulla:
+    // bisogna scrivere il file su disco e passarlo al foglio di condivisione nativo.
+    try {
+      const base64 = a.dataUrl.split(',')[1] || ''
+      const safeName = a.name.replace(/[\\/:*?"<>|]/g, '_')
+      const path = `attachments/${Date.now()}-${safeName}`
+      const { uri } = await Filesystem.writeFile({ path, data: base64, directory: Directory.Cache, recursive: true })
+      await Share.share({ title: a.name, url: uri })
+    } catch (err) {
+      alert(`Impossibile aprire "${a.name}": ${err?.message || 'errore sconosciuto'}`)
+    }
+    return
+  }
+  // Nel browser (anteprima web) il download standard funziona normalmente
   const link = document.createElement('a')
   link.href = a.dataUrl
   link.download = a.name
@@ -612,6 +629,13 @@ function AttachmentViewerModal({ theme, attachment, onClose }) {
   const isPdf = attachment.type === 'application/pdf'
   const isText = attachment.type?.startsWith('text/') || attachment.type === 'application/json'
   const [textContent, setTextContent] = useState(null)
+  const [opening, setOpening] = useState(false)
+
+  const handleOpenExternal = async () => {
+    setOpening(true)
+    await openAttachment(attachment)
+    setOpening(false)
+  }
 
   useEffect(() => {
     if (!isText) return
@@ -652,10 +676,10 @@ function AttachmentViewerModal({ theme, attachment, onClose }) {
       )}
 
       <button
-        onClick={() => openAttachment(attachment)}
-        style={{ width: '100%', marginTop: 16, padding: 13, borderRadius: 14, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, fontWeight: 700, cursor: 'pointer' }}
+        onClick={handleOpenExternal} disabled={opening}
+        style={{ width: '100%', marginTop: 16, padding: 13, borderRadius: 14, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, fontWeight: 700, cursor: opening ? 'default' : 'pointer', opacity: opening ? 0.6 : 1 }}
       >
-        Scarica / apri con un'altra app
+        {opening ? 'Apertura in corso...' : "Scarica / apri con un'altra app"}
       </button>
     </Modal>
   )
@@ -1806,7 +1830,6 @@ function ProfileScreen({
 }) {
   const [name, setName] = useState(profile.name || '')
   const [birthYear, setBirthYear] = useState(profile.birthYear ? String(profile.birthYear) : '')
-  const [netWorth, setNetWorth] = useState(profile.netWorth ? String(profile.netWorth) : '')
   const [salary, setSalary] = useState(profile.salary ? String(profile.salary) : '')
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -1824,7 +1847,8 @@ function ProfileScreen({
     const y = birthYear ? parseInt(birthYear, 10) : null
     if (y !== null && (y < 1900 || y > new Date().getFullYear())) { setError('Anno di nascita non valido'); setSaved(false); return }
     setError('')
-    onSaveProfile({ name: name.trim(), birthYear: y, netWorth: num(netWorth), salary: num(salary) })
+    // Il patrimonio di partenza non è mai preso dall'input: resta quello impostato in onboarding, invariato
+    onSaveProfile({ name: name.trim(), birthYear: y, netWorth: profile.netWorth || 0, salary: num(salary) })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -1863,9 +1887,14 @@ function ProfileScreen({
         </div>
         <div>
           <div style={fieldLabel}>Patrimonio di partenza €</div>
-          <input inputMode="decimal" style={inputStyle(theme)} value={netWorth} onChange={(e) => setNetWorth(e.target.value)} placeholder="es. 5000" />
+          <div style={{
+            ...inputStyle(theme), display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'default',
+          }}>
+            <span style={{ color: theme.text, fontWeight: 600 }}>{fmtCurrency(profile.netWorth || 0)}</span>
+            <Lock size={14} color={theme.subtext} />
+          </div>
           <div style={{ fontSize: 11, color: theme.subtext, marginTop: 6, lineHeight: 1.4 }}>
-            È il saldo iniziale del Conto Corrente: le transazioni si sommano a questo valore.
+            Impostabile solo in fase di configurazione iniziale e non più modificabile dopo, per non alterare lo storico di obiettivi e saldo. È il saldo iniziale del Conto Corrente: le transazioni si sommano a questo valore.
           </div>
         </div>
         <div>
@@ -2069,10 +2098,9 @@ export default function App() {
   const addGoal = (g) => setGoals(prev => [...prev, g])
   const deleteGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id))
 
-  const saveProfile = (p) => {
-    setProfile(p)
-    setAccounts(prev => prev.map(a => a.id === 'bank' ? { ...a, initialBalance: p.netWorth || 0 } : a))
-  }
+  // Il patrimonio di partenza (netWorth) è fissato una volta sola in onboarding (vedi finishOnboarding)
+  // e non viene più toccato qui: ProfileScreen lo rimanda sempre invariato.
+  const saveProfile = (p) => setProfile(p)
 
   // Elimina la categoria; le transazioni che la usano conservano nome/colore/icona (snapshot)
   const removeCategory = (id) => {
