@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.9 — 2026-10-03
+Il patrimonio di partenza non è più modificabile dopo l'onboarding.
+
+- Nel Profilo, il campo "Patrimonio di partenza" ora mostra solo il valore
+  impostato durante la configurazione iniziale (con un'icona di lucchetto) e non
+  si può più modificare da lì. Resta impostabile una sola volta, nel primo
+  avvio dell'app.
+
+## v1.8 — 2026-10-01
+Fix: "Scarica / apri con un'altra app" non faceva nulla sull'APK.
+
+- Il pulsante usava un trucco web (link con attributo "download") che nella
+  WebView di Android spesso non ha alcun effetto — per questo non succedeva
+  nulla. Ora sull'app nativa il file viene scritto davvero su disco e aperto
+  tramite il foglio di condivisione/apertura di Android (stesso menu "Condividi
+  con" che vedi dalle altre app), mentre nell'anteprima nel browser continua a
+  funzionare come prima con il download diretto.
+- Aggiunta una scritta "Apertura in corso..." sul pulsante mentre il file viene
+  preparato, ed eventuali errori ora mostrano un messaggio invece di restare
+  silenziosi.
+
 ## v1.7 — 2026-10-01
 Restituzioni collegate al movimento originale e allegati aperti dentro l'app.
 
