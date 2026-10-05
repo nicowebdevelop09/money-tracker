@@ -12,7 +12,7 @@ import {
   ArrowUpRight, ArrowDownRight, Utensils, Car, Home, HeartPulse, Film,
   ShoppingBag, FileText, MoreHorizontal, Briefcase, Gift, DollarSign,
   UserPlus, Trash2, Calendar, Bell, Lock, Upload, Download, Sun, Moon,
-  Monitor, Check, ChevronLeft, Wallet, User, Paperclip, Target, BarChart3, Fingerprint,
+  Monitor, Check, ChevronLeft, Wallet, User, Paperclip, Target, BarChart3, Fingerprint, Menu, PiggyBank,
 } from 'lucide-react'
 
 /* ============================================================
@@ -885,11 +885,11 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
   }, [accounts, transactions])
 
   const monthIncome = useMemo(() =>
-    transactions.filter(t => !t.isExpense && monthKey(new Date(t.date)) === monthKey(now))
+    transactions.filter(t => !t.isExpense && !t.isTransfer && monthKey(new Date(t.date)) === monthKey(now))
       .reduce((s, t) => s + t.amount, 0), [transactions])
 
   const monthExpense = useMemo(() =>
-    transactions.filter(t => t.isExpense && monthKey(new Date(t.date)) === monthKey(now))
+    transactions.filter(t => t.isExpense && !t.isTransfer && monthKey(new Date(t.date)) === monthKey(now))
       .reduce((s, t) => s + t.amount, 0), [transactions])
 
   const balanceFor = useCallback((contactId) =>
@@ -905,7 +905,7 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
   const pieData = useMemo(() => {
     const map = {}
     transactions
-      .filter(t => t.isExpense && monthKey(new Date(t.date)) === monthKey(now))
+      .filter(t => t.isExpense && !t.isTransfer && monthKey(new Date(t.date)) === monthKey(now))
       .forEach(t => {
         const v = catView(t, categories)
         if (!map[t.categoryId]) map[t.categoryId] = { name: v.name, color: v.color, value: 0 }
@@ -921,8 +921,8 @@ function DashboardScreen({ theme, transactions, accounts, categories, contacts, 
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
       const key = monthKey(d)
-      const income = transactions.filter(t => !t.isExpense && monthKey(new Date(t.date)) === key).reduce((s, t) => s + t.amount, 0)
-      const expense = transactions.filter(t => t.isExpense && monthKey(new Date(t.date)) === key).reduce((s, t) => s + t.amount, 0)
+      const income = transactions.filter(t => !t.isExpense && !t.isTransfer && monthKey(new Date(t.date)) === key).reduce((s, t) => s + t.amount, 0)
+      const expense = transactions.filter(t => t.isExpense && !t.isTransfer && monthKey(new Date(t.date)) === key).reduce((s, t) => s + t.amount, 0)
       arr.push({ label: d.toLocaleDateString('it-IT', { month: 'short' }), value: income - expense })
     }
     return arr
@@ -998,7 +998,7 @@ function AnalysisScreen({ theme, transactions, categories }) {
   const { start, end } = useMemo(() => periodRange(anchor, period), [anchor, period])
 
   const inRange = useMemo(
-    () => transactions.filter(t => { const d = new Date(t.date); return d >= start && d < end }),
+    () => transactions.filter(t => { if (t.isTransfer) return false; const d = new Date(t.date); return d >= start && d < end }),
     [transactions, start, end]
   )
 
@@ -1015,7 +1015,7 @@ function AnalysisScreen({ theme, transactions, categories }) {
     return Object.values(map)
   }, [inRange, categories])
 
-  const barData = useMemo(() => subBuckets(transactions, anchor, period), [transactions, anchor, period])
+  const barData = useMemo(() => subBuckets(transactions.filter(t => !t.isTransfer), anchor, period), [transactions, anchor, period])
 
   return (
     <div style={{ padding: 16, paddingBottom: 90 }}>
@@ -1080,9 +1080,10 @@ function AnalysisScreen({ theme, transactions, categories }) {
 }
 
 function TransactionsScreen({ theme, transactions, categories, accounts, onDelete }) {
+  const visibleTransactions = useMemo(() => transactions.filter(t => !t.isTransfer), [transactions])
   const grouped = useMemo(() => {
     const map = {}
-    ;[...transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(t => {
+    ;[...visibleTransactions].sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(t => {
       const key = fmtDate(t.date)
       if (!map[key]) map[key] = []
       map[key].push(t)
@@ -1090,7 +1091,7 @@ function TransactionsScreen({ theme, transactions, categories, accounts, onDelet
     return map
   }, [transactions])
 
-  if (!transactions.length) {
+  if (!visibleTransactions.length) {
     return <div style={{ padding: 40, textAlign: 'center', color: theme.subtext }}>Nessuna transazione ancora.<br />Usa il + per aggiungerne una.</div>
   }
 
@@ -1484,6 +1485,148 @@ function AddContactModal({ theme, onClose, onSave }) {
 /* ============================================================
    SCHERMATA: IMPOSTAZIONI
    ============================================================ */
+
+/* ============================================================
+   SCHERMATA: RISPARMI (salvadanai separati dal saldo disponibile)
+   ============================================================ */
+
+function AddPotModal({ theme, onClose, onSave }) {
+  const [name, setName] = useState('')
+  return (
+    <Modal theme={theme} title="Nuovo salvadanaio" onClose={onClose}>
+      <input
+        style={{ ...inputStyle(theme), marginBottom: 20 }}
+        placeholder='es. "Fondo emergenza", "Vacanza"' value={name} onChange={(e) => setName(e.target.value)}
+      />
+      <button
+        onClick={() => { if (!name.trim()) { alert('Inserisci un nome'); return } onSave(name.trim()) }}
+        style={{ width: '100%', padding: 15, borderRadius: 14, border: 'none', background: theme.primary, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}
+      >
+        Crea salvadanaio
+      </button>
+    </Modal>
+  )
+}
+
+function ManagePotModal({ theme, pot, accounts, onClose, onLoad, onUnload, onDelete }) {
+  const [mode, setMode] = useState('load') // 'load' = metti da parte, 'unload' = trasferisci al conto
+  const [amount, setAmount] = useState('')
+  const [accountId, setAccountId] = useState(accounts[0]?.id || '')
+
+  const save = () => {
+    const val = parseFloat(amount.replace(',', '.'))
+    if (!val || val <= 0) { alert('Inserisci un importo valido'); return }
+    if (mode === 'unload' && val > pot.balance) { alert(`Puoi scaricare al massimo ${fmtCurrency(pot.balance)}`); return }
+    if (mode === 'load') onLoad(val, accountId)
+    else onUnload(val, accountId)
+    onClose()
+  }
+
+  return (
+    <Modal theme={theme} title={pot.name} onClose={onClose}>
+      <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: theme.subtext }}>Saldo nel salvadanaio</div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: theme.text }}>{fmtCurrency(pot.balance)}</div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+        <ChipButton active={mode === 'load'} color={theme.income} theme={theme} onClick={() => setMode('load')}>Carica</ChipButton>
+        <ChipButton active={mode === 'unload'} color={theme.expense} theme={theme} onClick={() => setMode('unload')}>Scarica</ChipButton>
+      </div>
+
+      <input
+        style={{ ...inputStyle(theme), fontSize: 22, fontWeight: 700, textAlign: 'center', marginBottom: 18 }}
+        placeholder="0,00 €" value={amount} inputMode="decimal" onChange={(e) => setAmount(e.target.value)}
+      />
+
+      <div style={{ fontSize: 13, fontWeight: 600, color: theme.subtext, marginBottom: 8 }}>
+        {mode === 'load' ? 'Da quale conto prelevare' : 'Su quale conto arrivano i soldi'}
+      </div>
+      <select style={{ ...inputStyle(theme), marginBottom: 22 }} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+        {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+      </select>
+
+      <button onClick={save} style={{
+        width: '100%', padding: 15, borderRadius: 14, border: 'none', marginBottom: 12,
+        background: mode === 'load' ? theme.income : theme.expense, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer',
+      }}>
+        {mode === 'load' ? 'Metti da parte' : 'Trasferisci al conto'}
+      </button>
+
+      <button
+        onClick={onDelete}
+        style={{ width: '100%', padding: 12, borderRadius: 14, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.expense, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+      >
+        Elimina salvadanaio
+      </button>
+    </Modal>
+  )
+}
+
+function RisparmiScreen({ theme, pots, accounts, onAddPot, onDeletePot, onLoad, onUnload }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [managing, setManaging] = useState(null)
+
+  const totalSaved = pots.reduce((s, p) => s + p.balance, 0)
+
+  return (
+    <div style={{ padding: 16, paddingBottom: 90 }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: theme.text, marginBottom: 6 }}>Risparmi</div>
+      <div style={{ fontSize: 13, color: theme.subtext, marginBottom: 16, lineHeight: 1.4 }}>
+        Soldi messi da parte in uno o più salvadanai, esclusi dal Saldo Totale Disponibile.
+      </div>
+
+      <div style={{ background: theme.card, borderRadius: 18, padding: 18, marginBottom: 20, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: theme.subtext }}>Totale accantonato</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: theme.text, marginTop: 4 }}>{fmtCurrency(totalSaved)}</div>
+      </div>
+
+      {pots.length === 0 && (
+        <div style={{ color: theme.subtext, fontSize: 13, background: theme.card, borderRadius: 16, padding: 16, marginBottom: 16, lineHeight: 1.5 }}>
+          Nessun salvadanaio ancora. Creane uno per iniziare a mettere via dei soldi (es. "Fondo emergenza").
+        </div>
+      )}
+
+      {pots.map(p => (
+        <div
+          key={p.id} onClick={() => setManaging(p)}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, background: theme.card, borderRadius: 16, padding: 14, marginBottom: 10, cursor: 'pointer' }}
+        >
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: `${theme.primary}26`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <PiggyBank size={19} color={theme.primary} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+            <div style={{ fontSize: 12, color: theme.subtext }}>Tocca per caricare o scaricare</div>
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: theme.text }}>{fmtCurrency(p.balance)}</div>
+        </div>
+      ))}
+
+      <button
+        onClick={() => setShowAdd(true)}
+        style={{
+          position: 'fixed', right: 18, bottom: 20, width: 56, height: 56, borderRadius: 18,
+          background: theme.primary, border: 'none', boxShadow: '0 8px 20px rgba(0,0,0,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 40,
+        }}
+      >
+        <Plus size={24} color="#fff" />
+      </button>
+
+      {showAdd && <AddPotModal theme={theme} onClose={() => setShowAdd(false)} onSave={(name) => { onAddPot(name); setShowAdd(false) }} />}
+      {managing && (
+        <ManagePotModal
+          theme={theme} pot={managing} accounts={accounts}
+          onClose={() => setManaging(null)}
+          onLoad={(amount, accountId) => { onLoad(managing.id, amount, accountId); setManaging(null) }}
+          onUnload={(amount, accountId) => { onUnload(managing.id, amount, accountId); setManaging(null) }}
+          onDelete={() => { onDeletePot(managing.id); setManaging(null) }}
+        />
+      )}
+    </div>
+  )
+}
 
 function SettingsScreen({ theme, settings, setSettings, exportBackup, importBackup, exportCsv }) {
   const fileInputRef = React.useRef(null)
@@ -2014,32 +2157,69 @@ function LockScreen({ theme, pin, biometricEnabled, onUnlock }) {
    BOTTOM NAVIGATION
    ============================================================ */
 
-function BottomNav({ theme, tab, setTab }) {
-  const items = [
-    { key: 'dashboard', label: 'Home', icon: LayoutDashboard },
-    { key: 'transactions', label: 'Movimenti', icon: Receipt },
-    { key: 'analysis', label: 'Analisi', icon: BarChart3 },
-    { key: 'debts', label: 'Crediti', icon: Users },
-    { key: 'profile', label: 'Profilo', icon: User },
-    { key: 'settings', label: 'Impostazioni', icon: SettingsIcon },
-  ]
+// Elenco unico delle sezioni dell'app: usato sia dal menu a tendina sia dal titolo in alto
+const NAV_ITEMS = [
+  { key: 'dashboard', label: 'Home', icon: LayoutDashboard },
+  { key: 'transactions', label: 'Movimenti', icon: Receipt },
+  { key: 'analysis', label: 'Analisi', icon: BarChart3 },
+  { key: 'savings', label: 'Risparmi', icon: PiggyBank },
+  { key: 'debts', label: 'Crediti', icon: Users },
+  { key: 'profile', label: 'Profilo', icon: User },
+  { key: 'settings', label: 'Impostazioni', icon: SettingsIcon },
+]
+
+// Barra in alto fissa: hamburger per aprire il menu + titolo della sezione corrente
+function TopBar({ theme, title, onMenuClick }) {
   return (
     <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, background: theme.card,
-      borderTop: `1px solid ${theme.border}`, display: 'flex', paddingBottom: 'env(safe-area-inset-bottom, 6px)',
+      position: 'sticky', top: 0, zIndex: 30, background: theme.bg,
+      display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+      borderBottom: `1px solid ${theme.border}`, paddingTop: 'calc(14px + env(safe-area-inset-top, 0px))',
     }}>
-      {items.map(it => (
-        <div key={it.key} onClick={() => setTab(it.key)} style={{
-          flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-          padding: '9px 0 6px', cursor: 'pointer', minWidth: 0,
-        }}>
-          <it.icon size={18} color={tab === it.key ? theme.primary : theme.subtext} />
-          <div style={{ fontSize: 9, color: tab === it.key ? theme.primary : theme.subtext, fontWeight: tab === it.key ? 700 : 400, whiteSpace: 'nowrap' }}>
-            {it.label}
-          </div>
-        </div>
-      ))}
+      <button onClick={onMenuClick} style={iconBtnStyle(theme)}><Menu size={20} color={theme.text} /></button>
+      <div style={{ fontSize: 17, fontWeight: 800, color: theme.text }}>{title}</div>
     </div>
+  )
+}
+
+// Menu a tendina laterale (da sinistra) con tutte le sezioni dell'app
+function DrawerMenu({ theme, open, onClose, tab, setTab }) {
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 90,
+          opacity: open ? 1 : 0, pointerEvents: open ? 'auto' : 'none', transition: 'opacity .2s',
+        }}
+      />
+      <div style={{
+        position: 'fixed', top: 0, bottom: 0, left: 0, width: 260, maxWidth: '80%', background: theme.card,
+        zIndex: 91, transform: open ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform .25s ease',
+        boxShadow: '4px 0 20px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column',
+        paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}>
+        <div style={{ padding: '18px 20px', fontSize: 18, fontWeight: 800, color: theme.text, borderBottom: `1px solid ${theme.border}` }}>
+          Money Tracker
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+          {NAV_ITEMS.map(it => (
+            <div
+              key={it.key} onClick={() => { setTab(it.key); onClose() }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14, padding: '13px 14px', borderRadius: 12, cursor: 'pointer',
+                background: tab === it.key ? `${theme.primary}20` : 'transparent', marginBottom: 2,
+              }}
+            >
+              <it.icon size={19} color={tab === it.key ? theme.primary : theme.subtext} />
+              <div style={{ fontSize: 14, fontWeight: tab === it.key ? 700 : 500, color: tab === it.key ? theme.primary : theme.text }}>
+                {it.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -2061,6 +2241,8 @@ export default function App() {
   const [contacts, setContacts] = useLocalStorageState('mt_contacts', [])
   const [debtEntries, setDebtEntries] = useLocalStorageState('mt_debtEntries', [])
   const [goals, setGoals] = useLocalStorageState('mt_goals', [])
+  const [savingsPots, setSavingsPots] = useLocalStorageState('mt_savingsPots', [])
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [profile, setProfile] = useLocalStorageState('mt_profile', { name: '', birthYear: null, netWorth: 0, salary: 0 })
   const [onboarding, setOnboarding] = useLocalStorageState('mt_onboarding', { onboarded: false })
 
@@ -2097,6 +2279,35 @@ export default function App() {
 
   const addGoal = (g) => setGoals(prev => [...prev, g])
   const deleteGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id))
+
+  // Salvadanai "Risparmi": soldi messi da parte, tenuti fuori dal saldo disponibile.
+  // Caricare/scaricare crea una transazione nascosta (isTransfer: true): sposta davvero
+  // il saldo tra il salvadanaio e il conto scelto, ma non compare mai in Movimenti/Analisi/CSV.
+  const addPot = (name) => setSavingsPots(prev => [...prev, { id: uuid(), name, balance: 0, createdAt: new Date().toISOString() }])
+
+  const deletePot = (id) => {
+    const pot = savingsPots.find(p => p.id === id)
+    if (pot && pot.balance > 0) { alert('Svuota il salvadanaio prima di eliminarlo (scarica il saldo su un conto).'); return }
+    setSavingsPots(prev => prev.filter(p => p.id !== id))
+  }
+
+  const loadIntoPot = (potId, amount, accountId) => {
+    const pot = savingsPots.find(p => p.id === potId)
+    addTransaction({
+      id: uuid(), amount, isExpense: true, isTransfer: true, categoryId: 'transfer', accountId,
+      date: new Date().toISOString(), notes: `Accantonato in "${pot?.name || 'Risparmi'}"`,
+    })
+    setSavingsPots(prev => prev.map(p => p.id === potId ? { ...p, balance: p.balance + amount } : p))
+  }
+
+  const unloadFromPot = (potId, amount, accountId) => {
+    const pot = savingsPots.find(p => p.id === potId)
+    addTransaction({
+      id: uuid(), amount, isExpense: false, isTransfer: true, categoryId: 'transfer', accountId,
+      date: new Date().toISOString(), notes: `Prelevato da "${pot?.name || 'Risparmi'}"`,
+    })
+    setSavingsPots(prev => prev.map(p => p.id === potId ? { ...p, balance: Math.max(0, p.balance - amount) } : p))
+  }
 
   // Il patrimonio di partenza (netWorth) è fissato una volta sola in onboarding (vedi finishOnboarding)
   // e non viene più toccato qui: ProfileScreen lo rimanda sempre invariato.
@@ -2149,7 +2360,7 @@ export default function App() {
   }
 
   const exportBackup = () => {
-    const data = { version: 3, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries, goals }
+    const data = { version: 4, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries, goals, savingsPots }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -2161,7 +2372,7 @@ export default function App() {
 
   const exportCsv = () => {
     const rows = [['data', 'tipo', 'importo', 'categoria', 'conto', 'note']]
-    transactions.forEach(t => {
+    transactions.filter(t => !t.isTransfer).forEach(t => {
       const cat = catView(t, categories)
       const acc = accounts.find(a => a.id === t.accountId)
       rows.push([t.date, t.isExpense ? 'Uscita' : 'Entrata', t.amount, cat.name, acc?.name || '', t.notes || ''])
@@ -2188,6 +2399,7 @@ export default function App() {
         if (data.contacts) setContacts(data.contacts)
         if (data.debtEntries) setDebtEntries(data.debtEntries)
         if (data.goals) setGoals(data.goals)
+        if (data.savingsPots) setSavingsPots(data.savingsPots)
         alert('Backup importato con successo')
       } catch {
         alert('File non valido')
@@ -2216,10 +2428,14 @@ export default function App() {
   }
 
   const activeContact = activeContactId ? contacts.find(c => c.id === activeContactId) : null
+  const showTopBar = !(tab === 'debts' && activeContact) // ContactDetailScreen ha già il suo header con freccia indietro
+  const currentTitle = NAV_ITEMS.find(i => i.key === tab)?.label || ''
 
   return (
     <div style={{ height: '100%', background: theme.bg, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <style>{`@keyframes slideUp { from { transform: translateY(30px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }`}</style>
+
+      {showTopBar && <TopBar theme={theme} title={currentTitle} onMenuClick={() => setDrawerOpen(true)} />}
 
       {tab === 'dashboard' && (
         <DashboardScreen theme={theme} transactions={transactions} accounts={accounts} categories={categories} contacts={contacts} debtEntries={debtEntries} profile={profile} goals={goals} onAddGoal={addGoal} onDeleteGoal={deleteGoal} />
@@ -2231,6 +2447,10 @@ export default function App() {
 
       {tab === 'analysis' && (
         <AnalysisScreen theme={theme} transactions={transactions} categories={categories} />
+      )}
+
+      {tab === 'savings' && (
+        <RisparmiScreen theme={theme} pots={savingsPots} accounts={accounts} onAddPot={addPot} onDeletePot={deletePot} onLoad={loadIntoPot} onUnload={unloadFromPot} />
       )}
 
       {tab === 'debts' && !activeContact && (
@@ -2267,7 +2487,7 @@ export default function App() {
         <button
           onClick={() => tab === 'debts' ? setShowAddContact(true) : setShowAddTx(true)}
           style={{
-            position: 'fixed', right: 18, bottom: 78, width: 56, height: 56, borderRadius: 18,
+            position: 'fixed', right: 18, bottom: 20, width: 56, height: 56, borderRadius: 18,
             background: theme.primary, border: 'none', boxShadow: '0 8px 20px rgba(0,0,0,0.3)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 40,
           }}
@@ -2276,7 +2496,7 @@ export default function App() {
         </button>
       )}
 
-      <BottomNav theme={theme} tab={tab} setTab={(t) => { setTab(t); setActiveContactId(null) }} />
+      <DrawerMenu theme={theme} open={drawerOpen} onClose={() => setDrawerOpen(false)} tab={tab} setTab={(t) => { setTab(t); setActiveContactId(null) }} />
 
       {showAddTx && <AddTransactionModal theme={theme} categories={categories} accounts={accounts} onClose={() => setShowAddTx(false)} onSave={addTransaction} />}
       {showAddContact && <AddContactModal theme={theme} onClose={() => setShowAddContact(false)} onSave={addContact} />}
