@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.0 — 2026-10-03
+Sezione Risparmi (salvadanai) e menu di navigazione a tendina al posto della barra in basso.
+
+- **Risparmi**: nuova sezione con uno o più "salvadanai" nominabili (es. "Fondo
+  emergenza", "Vacanza"). Ogni salvadanaio ha un saldo proprio che puoi
+  **caricare** (metti via una somma prelevandola da un conto) o **scaricare**
+  (la trasferisci su un conto a scelta). I soldi nei salvadanai sono **esclusi
+  dal Saldo Totale Disponibile** in Home e i movimenti di carico/scarico **non
+  compaiono** in Movimenti, Analisi o nell'export CSV — restano fuori dalla
+  cronologia normale, esattamente come richiesto. Un salvadanaio si elimina solo
+  a saldo zero (altrimenti va prima svuotato).
+- **Navigazione**: la barra in basso è stata sostituita da un **menu a tendina
+  laterale** (icona hamburger in alto a sinistra) che elenca tutte le sezioni,
+  Risparmi incluso: Home, Movimenti, Analisi, Risparmi, Crediti, Profilo,
+  Impostazioni. Il titolo della sezione corrente resta sempre visibile in alto.
+
 ## v1.9 — 2026-10-03
 Il patrimonio di partenza non è più modificabile dopo l'onboarding.
 
