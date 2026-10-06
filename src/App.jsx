@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { BiometricAuth } from '@aparajita/capacitor-biometric-auth'
-import { Filesystem, Directory } from '@capacitor/filesystem'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, ResponsiveContainer, Tooltip,
@@ -166,6 +166,28 @@ async function openAttachment(a) {
   link.target = '_blank'
   link.rel = 'noreferrer'
   link.click()
+}
+
+// Esporta un file di testo (JSON/CSV): stesso problema degli allegati, il trucco
+// <a download> spesso non fa nulla nella WebView di Android, quindi su app nativa
+// scrive il file su disco e lo passa al foglio di condivisione/salvataggio di sistema.
+async function exportFileContent(filename, mimeType, content) {
+  if (isNative) {
+    try {
+      const { uri } = await Filesystem.writeFile({ path: filename, data: content, directory: Directory.Cache, encoding: Encoding.UTF8 })
+      await Share.share({ title: filename, url: uri })
+    } catch (err) {
+      alert(`Impossibile esportare "${filename}": ${err?.message || 'errore sconosciuto'}`)
+    }
+    return
+  }
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 // --- Periodi per la sezione Analisi (giorno / settimana / mese / anno) ---
@@ -1628,9 +1650,63 @@ function RisparmiScreen({ theme, pots, accounts, onAddPot, onDeletePot, onLoad, 
   )
 }
 
+const EXPORT_SECTIONS = [
+  { key: 'profile', label: 'Profilo' },
+  { key: 'categories', label: 'Categorie' },
+  { key: 'accounts', label: 'Conti' },
+  { key: 'transactions', label: 'Transazioni (spese/entrate)' },
+  { key: 'debts', label: 'Crediti e debiti (contatti e movimenti)' },
+  { key: 'goals', label: 'Obiettivi di risparmio' },
+  { key: 'savingsPots', label: 'Risparmi (salvadanai)' },
+]
+
+function ExportDataModal({ theme, onClose, onExport }) {
+  const [selected, setSelected] = useState(() => Object.fromEntries(EXPORT_SECTIONS.map(s => [s.key, true])))
+  const allSelected = EXPORT_SECTIONS.every(s => selected[s.key])
+
+  const toggle = (key) => setSelected(prev => ({ ...prev, [key]: !prev[key] }))
+  const toggleAll = () => setSelected(Object.fromEntries(EXPORT_SECTIONS.map(s => [s.key, !allSelected])))
+
+  return (
+    <Modal theme={theme} title="Esporta dati" onClose={onClose}>
+      <div style={{ fontSize: 12, color: theme.subtext, marginBottom: 14, lineHeight: 1.4 }}>
+        Scegli cosa includere nel file di backup (JSON).
+      </div>
+
+      <button
+        onClick={toggleAll}
+        style={{ background: 'none', border: 'none', color: theme.primary, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, marginBottom: 10 }}
+      >
+        {allSelected ? 'Deseleziona tutto' : 'Seleziona tutto'}
+      </button>
+
+      <div style={{ background: theme.card, borderRadius: 16, padding: 6, marginBottom: 22 }}>
+        {EXPORT_SECTIONS.map(s => (
+          <label key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!selected[s.key]} onChange={() => toggle(s.key)} style={{ width: 18, height: 18 }} />
+            <div style={{ color: theme.text, fontSize: 14 }}>{s.label}</div>
+          </label>
+        ))}
+      </div>
+
+      <button
+        onClick={() => { onExport(selected); onClose() }}
+        disabled={!EXPORT_SECTIONS.some(s => selected[s.key])}
+        style={{
+          width: '100%', padding: 15, borderRadius: 14, border: 'none', background: theme.primary, color: '#fff',
+          fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: EXPORT_SECTIONS.some(s => selected[s.key]) ? 1 : 0.5,
+        }}
+      >
+        Esporta
+      </button>
+    </Modal>
+  )
+}
+
 function SettingsScreen({ theme, settings, setSettings, exportBackup, importBackup, exportCsv }) {
   const fileInputRef = React.useRef(null)
   const [bioAvailable, setBioAvailable] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   useEffect(() => { biometricCheck().then(r => setBioAvailable(!!r.isAvailable)) }, [])
 
@@ -1708,9 +1784,9 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
 
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.subtext, marginBottom: 8 }}>BACKUP DATI</div>
       <div style={{ background: theme.card, borderRadius: 16, padding: 6, marginBottom: 22 }}>
-        <div onClick={exportBackup} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, cursor: 'pointer' }}>
+        <div onClick={() => setShowExport(true)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, cursor: 'pointer' }}>
           <Upload size={18} color={theme.subtext} />
-          <div style={{ color: theme.text, fontSize: 14 }}>Esporta backup completo (JSON)</div>
+          <div style={{ color: theme.text, fontSize: 14 }}>Esporta dati (scegli cosa includere)</div>
         </div>
         <div onClick={exportCsv} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, cursor: 'pointer' }}>
           <FileText size={18} color={theme.subtext} />
@@ -1730,6 +1806,8 @@ function SettingsScreen({ theme, settings, setSettings, exportBackup, importBack
       <div style={{ textAlign: 'center', color: theme.subtext, fontSize: 11, marginTop: 30, lineHeight: 1.6 }}>
         Tutti i dati restano esclusivamente su questo dispositivo.<br />Nessun server, nessun cloud.
       </div>
+
+      {showExport && <ExportDataModal theme={theme} onClose={() => setShowExport(false)} onExport={exportBackup} />}
     </div>
   )
 }
@@ -2359,15 +2437,17 @@ export default function App() {
     requestNotificationPermission().catch(() => {})
   }
 
-  const exportBackup = () => {
-    const data = { version: 4, exportedAt: new Date().toISOString(), profile, categories, accounts, transactions, contacts, debtEntries, goals, savingsPots }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `money-tracker-backup-${Date.now()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+  // sections: oggetto { profile, categories, accounts, transactions, debts, goals, savingsPots } di booleani
+  const exportBackup = (sections) => {
+    const data = { version: 4, exportedAt: new Date().toISOString() }
+    if (sections.profile) data.profile = profile
+    if (sections.categories) data.categories = categories
+    if (sections.accounts) data.accounts = accounts
+    if (sections.transactions) data.transactions = transactions
+    if (sections.debts) { data.contacts = contacts; data.debtEntries = debtEntries }
+    if (sections.goals) data.goals = goals
+    if (sections.savingsPots) data.savingsPots = savingsPots
+    exportFileContent(`money-tracker-backup-${Date.now()}.json`, 'application/json', JSON.stringify(data, null, 2))
   }
 
   const exportCsv = () => {
@@ -2378,13 +2458,7 @@ export default function App() {
       rows.push([t.date, t.isExpense ? 'Uscita' : 'Entrata', t.amount, cat.name, acc?.name || '', t.notes || ''])
     })
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `transazioni-${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    exportFileContent(`transazioni-${Date.now()}.csv`, 'text/csv', csv)
   }
 
   const importBackup = (file) => {
