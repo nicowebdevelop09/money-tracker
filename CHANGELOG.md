@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.1 — 2026-10-05
+Fix: l'esportazione dati non funzionava sull'APK; ora si può anche scegliere cosa esportare.
+
+- **Fix**: come per gli allegati (v1.8), l'esportazione backup (JSON) e CSV usava
+  un trucco web che nella WebView di Android spesso non faceva nulla. Ora sull'app
+  nativa il file viene scritto su disco e aperto tramite il foglio di condivisione
+  di sistema, esattamente come per le prove allegate; nell'anteprima web continua
+  a funzionare come download diretto.
+- **Esportazione selettiva**: "Esporta backup completo" è diventato "Esporta dati
+  (scegli cosa includere)" — si apre un elenco con una voce per ogni sezione
+  (Profilo, Categorie, Conti, Transazioni, Crediti e debiti, Obiettivi di
+  risparmio, Risparmi/salvadanai), tutte selezionate di default, con un pulsante
+  "Seleziona tutto/Deseleziona tutto". Il file esportato contiene solo le sezioni
+  scelte. L'importazione resta invariata e compatibile sia con i backup completi
+  sia con quelli parziali.
+
 ## v2.0 — 2026-10-03
 Sezione Risparmi (salvadanai) e menu di navigazione a tendina al posto della barra in basso.
 
